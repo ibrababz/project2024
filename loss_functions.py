@@ -1044,6 +1044,45 @@ def loss_from_map_tensor(pred, flat_arr, weight_arr):
 
     return loss
 
+
+def getVectors(pred, map_list, act_list = None):
+    if act_list is None:
+        act_list = act_list_3D(map_list)
+    shape_pred = pred.shape
+    batch_size = shape_pred[0]
+    vect_pred = B.reshape(pred, (batch_size*shape_pred[1]*shape_pred[2],1))
+    flat_map_list1 = flat_map_list_v2(map_list)
+    flat_act_list1 = flat_map_list_v2(act_list)
+    flat_map_arr1 = np.array(flat_map_list1)
+    flat_act_arr1 = np.array(flat_act_list1)
+    
+    shape_map = np.shape(flat_map_arr1)
+    shape_act = np.shape(flat_act_arr1)
+    
+    #print("shape_map = ", shape_map)
+    #print("shape_act = ", shape_act)
+    vect_map1 = B.reshape(flat_map_arr1, (shape_map[0]*shape_map[1]*shape_map[2],shape_map[3]))
+    vect_act1 = B.reshape(flat_act_arr1, (shape_act[0]*shape_act[1]*shape_act[2],shape_act[3]))
+
+    
+    # vect_map1_inv = 1 - vect_map1
+    # vect_act1_inv = 1 - vect_act1
+    
+    return vect_pred, vect_map1, vect_act1
+    
+
+def tensorPosNegLoss(vect_pred, vect_map1, vect_act1, vect_map1_inv, vect_act1_inv):
+    # print(vect_pred.shape, vect_map1.shape, vect_act1.shape)
+    neg_loss = tf.reduce_sum(tf.clip_by_value((-vect_act1_inv*vect_map1_inv*tf.math.log(vect_act1_inv*(1-vect_pred) + 1e-15)), 0.0, 15.))/tf.reduce_sum(vect_act1_inv)
+    pos_loss = tf.reduce_sum(tf.clip_by_value((-vect_act1*tf.math.log(vect_act1*vect_pred+ 1e-15)), 0.0, 15.))/tf.reduce_sum(vect_act1)
+    return pos_loss, neg_loss
+
+def tensorDiceLoss(vect_pred, vect_map1, vect_act1, vect_map1_inv, vect_act1_inv):
+    dice_pos = 1 - 2.*tf.reduce_sum(vect_act1*vect_pred)/(tf.reduce_sum(vect_act1*vect_act1) + tf.reduce_sum(vect_pred*vect_pred)+1.e-15)
+    dice_neg = 1 - 2.*tf.reduce_sum(vect_act1_inv*(1.-vect_pred))/(tf.reduce_sum(vect_act1_inv* vect_act1_inv) + tf.reduce_sum((1.-vect_pred)*(1.-vect_pred))+1.e-15)
+    dice_loss = (dice_pos+dice_neg)/2
+    return dice_loss    
+    
 def tensor_pos_neg_loss(pred, map_list, act_list = None):
     
     if act_list is None:

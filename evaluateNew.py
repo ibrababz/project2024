@@ -22,7 +22,7 @@ if __name__ =='__main__':
 #%%
     wNorm = 255.
     # iTestSrcDir = "data4k\\test_real"
-    iTestSrcDir, iRes = "data4k\\test_real_448_res2", 2
+    iTestSrcDir, iRes = "data4k\\test_real_448_res2", 3
     iTestSrcPath = os.path.join(ROOT_DIR, iTestSrcDir)         
     wTestDataObjectList = loadDataFilesAsObjects(iTestSrcPath)        
         
@@ -36,12 +36,13 @@ if __name__ =='__main__':
     
 #%% Load Start
     wEvaluator = ModelEvaluator(wModel, wOptimizer)
-    wDecoderName = wModel.layers[-1].name
-    wEvaluator.setDecoderName(wDecoderName)
+    # wDecoderName = wModel.layers[-1].name
+    # wEvaluator.setDecoderName(wDecoderName)
     #%%
-    wLoadDir = os.path.join(ROOT_DIR, 'project2024','resnet_test_13_real_8bit_res2_ep_(0, 1000)_lr_1e-04')
+    # wLoadDir = os.path.join(ROOT_DIR, 'project2024','resnet_test_13_real_8bit_res2_ep_(0, 1000)_lr_1e-04')
+    wLoadDir = os.path.join(ROOT_DIR, 'project2024','test_13_resnet_ep_0-1200_lr_1e-04')    
     wEvaluator.setLoadDir(wLoadDir)
-    wEvaluator.loadFromCkpt('0987_min_val')
+    wEvaluator.loadFromCkpt('1199_ckpt')
     wEvaluator.setData(iTestData = wTestDataObjectList, iBatchSize = wBatchSize)
     wEvaluator.setNorm(iNorm = wNorm)
     wEvaluator.setSaveDir(iSaveDir = wLoadDir)
@@ -58,12 +59,12 @@ if __name__ =='__main__':
     wEvaluator.setSaveSize((1280,1280))
     wEvaluator.setSavePlotType('truth_acts')
     wEvaluator.setSavePlots(False)
-    
-    for iResIdx in range(3):
-        wStart, wEnd, wStep = 0.5, 0.95, 0.025
+#%%    
+    for iResIdx in range(1):
+        wStart, wEnd, wStep = 0.5, 1, 0.0125
         wNoSteps = int((wEnd-wStart)//wStep)+1
         wThreshList = [round(wStart+i*wStep,3) for i in range(wNoSteps)]
-        wThreshList = [.85]
+        # wThreshList = [.85]
         for wThresh in wThreshList:
             wEvaluator.computeMetrics(wThresh, iResIdx)
             wEvaluator.printMetrics(iResIdx, wThresh)

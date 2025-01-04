@@ -24,7 +24,7 @@ from dataLoad import flat_map_list_v2
 ROOT_DIR = os.path.abspath(os.path.join(file.ROOT_DIR, os.pardir))
 
 #%%
-iSrcDir = "data2019\\1\\train_synth_8bit"
+iSrcDir = "data2019\\synth\\test_11_tr_10_dim_448_sample_4_frac_1e+00_res_3_blend_True_clr_True_uint"
 iSrcPath = os.path.join(ROOT_DIR, iSrcDir)         
 wDataObjectList = loadDataFilesAsObjects(iSrcPath)[:]
 #%%

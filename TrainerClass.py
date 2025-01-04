@@ -9,48 +9,64 @@ import os
 from joblib import dump, load
 import tensorflow as tf
 import numpy as np
-from dataLoad import getImageListFromBatch, getNameListFromBatch, getMapListsFromBatch, ProcessMapList3D, show_batch, flat_map_list_v2
+from dataLoad import getImageListFromBatch, getNameListFromBatch, getMapListsFromBatch, ProcessMapList3D, show_batch, get_batch_plots, flat_map_list_v2
 from dataLoad import file_writing
 from helper import adjust_number
 # from loss_functions import ComputeLosses
 from augment_utils import copyTemp, augmentXData, normListBy
 from loss_functions import tensor_pos_neg_loss, dist_loss_from_list, tensor_dice_loss, tensor_map_loss, act_list_3D
+from loss_functions import getVectors, tensorPosNegLoss, tensorDiceLoss
 from tensorflow.keras import backend as B  
 from tensorflow.train import Checkpoint
 from metrics import act_from_pred_list, threshold_list, refine_thresh_list
 from metrics import get_cntrs_list, draw_cntrs_list, draw_cntrs_exp_list, find_cent_list, draw_cent_on_im_list
 from metrics import TF_Metrics_from_batch, Metrics_from_TF_batch
+from shutil import rmtree
+
+from models import removeClassificationLayers, addTransferLearnLayersV3
+
+
 
 class ModelTrainer:
     def __init__(self, iModel, iOptimizer):
         self.mModel= iModel
         self.mOptimizer = iOptimizer
-        self.mMinValCkpt = Checkpoint(model = self.mModel, optimizer= self.mOptimizer)
-        self.mLastNCkpt = Checkpoint(model = self.mModel, optimizer= self.mOptimizer)
-        self.mNCkpt = Checkpoint(model = self.mModel, optimizer= self.mOptimizer)
+        
         self.mShape = tuple(iModel.input.shape[1:])
         H, W, C = self.mShape
         self.mDim = (W,H)
         self.mLossLvlSched = {}
         self.mLayerStateDict = {}
         self.mLRSched = {}
+        self.mBatchSizeSched = {}
+        self.mLogArray=[]
         self.mMinValLoss = None
         self.mMinTrainLoss = None
         self.setLoadFlag(False)
         self.setLoadEpoch(None)
+        self.initCkptData()
+        #self.setDecoderResolutionsDict()
         
-        
+    def initCkptData(self):
+        self.mMinValCkpt = Checkpoint(model = self.getModel(), optimizer= self.getOptimizer())
+        self.mLastNCkpt = Checkpoint(model = self.getModel(), optimizer= self.getOptimizer())
+        self.mNCkpt = Checkpoint(model = self.getModel(), optimizer= self.getOptimizer())
     
     def writeInitData(self):
         wLRSched = self.getLRSched()
         wLossLvlSched = self.getLossLvlSchedule()
         wLayerStateDict = self.getLayerStateDict()
+        wBatchSizeDict = self.getBatchSizeSchedule()
         wInitDict = {'loss types': self.getLossDict(), 'break': {'train': self.getBreakEpochsTrain(), 'val': self.getBreakEpochsVal()}}
         wSchedDict = {'lr': wLRSched,
                       'loss level': wLossLvlSched,
-                      'layer states': wLayerStateDict}
+                      'layer states': wLayerStateDict,
+                      'batch size': wBatchSizeDict}
         wInitDict.update({'sched': wSchedDict})
         dump(wInitDict, os.path.join(self.getSaveDir(), 'init.dump'))
+        self.setLogFile('loss_log.csv', 'a')
+        self.logFile('Epoch,Training Loss,Valid Loss,Min Valid Loss')
+
         
     def setCkptFreq(self, iEveryNEpochs = 25):
         self.mEveryNEpochs = iEveryNEpochs
@@ -67,8 +83,69 @@ class ModelTrainer:
     def getLossDict(self):
         return self.mLossDict
     
+    def getDecoder(self):
+        return self.getModel().layers[-1]
+    
+    def getDecoderLayers(self):
+        return self.getDecoder().layers
+    
+    def setDecoderResolutionsDict(self):
+        self.mResolutions={} 
+        for wLayer in self.getDecoderLayers():
+            wOutputHW = tuple(wLayer.output.shape[1:3])
+            if wOutputHW not in self.mResolutions.keys():
+                self.mResolutions.update({wOutputHW: []})
+            self.mResolutions[wOutputHW].append(wLayer.name)
+                
+    def getDecoderResolutionsDict(self):
+        return self.mResolutions
+    
+    def getDecoderResolutions(self):
+        return list(self.getDecoderResolutionsDict().keys())
+    
+    def setLossLvlScheduleFromFlagList(self, iEpochList, iFlagList):
+        for wEpoch, wFlag in zip(iEpochList, iFlagList):
+            self.setLossLvlScheduleFromFlag(wEpoch, wFlag)
+    
+    def setLossLvlScheduleFromFlag(self, iEpoch, iFlag):
+        if abs(iFlag)>len(self.getDecoderResolutions()):
+            wResList=[]        
+        elif iFlag>=0:
+            wResList= [iFlag]
+        elif iFlag<0:
+            wResList = list(range(abs(iFlag)+1))
+  
+            
+        self.setLossLvlScheduleByRes(iEpoch, wResList)
+    
+    def setLossLvlScheduleByRes(self, iEpoch, iResList):
+        wNoRes = len(self.getDecoderResolutions())
+        wLossLvl = [0]*wNoRes
+        for i in iResList:
+            wLossLvl[i] = 1
+        self.setLossLvlSchedule(iEpoch, wLossLvl)
+        
     def setLossLvlSchedule(self, iEpoch, iLossLvl):
         self.mLossLvlSched.update({str(iEpoch):iLossLvl})
+        self.setLayerStatesFromLossLvlSched(iEpoch, iLossLvl)
+
+    def setBatchSizeSchedule(self, iEpoch, iBatchSize):
+        self.mBatchSizeSched.update({str(iEpoch):iBatchSize})
+        
+    def setBatchSizeSchedFromLists(self, iEpochList, iBatchSizeList):
+        for wEpoch, wBatchSize in zip(iEpochList, iBatchSizeList):
+            self.setBatchSizeSchedule(wEpoch, wBatchSize)
+            
+    def getBatchSizeSchedule(self):
+        return self.mBatchSizeSched
+    
+    def setLayerStatesFromLossLvlSched(self, iEpoch, iLossLvl):
+        wDecoderDict = {}
+        for wLvl, wRes in zip(iLossLvl, self.getDecoderResolutions()):
+            wLayerNames = self.getDecoderResolutionsDict()[wRes]
+            wDecoderDict.update(self.genLayerStateDict(wLayerNames, [bool(wLvl)]*len(wLayerNames)))
+        wLayerStateDict = {self.getDecoderName():wDecoderDict}
+        self.setLayerFreezeScheduleByName(iEpoch, wLayerStateDict)        
         
     def setLossLvlScheduleFromDict(self, iDict):
         self.mLossLvlSched = iDict
@@ -88,17 +165,18 @@ class ModelTrainer:
     def setLayerFreezeScheduleFromDict(self, iDict):
         self.mLayerStateDict = iDict
     
-    def setDecoderName(self, iDecoderName):
-        self.mDecoderName = iDecoderName
     
     def getDecoderName(self):
-        return self.mDecoderName
+        return self.getDecoder().name
     
     def setLRSched(self, iEpoch, iLR):
         self.mLRSched.update({str(iEpoch): iLR})
         
     def setLRSchedFromDict(self, iDict):
         self.mLRSched = iDict
+        
+    def setBatchSizeScheduleFromDict(self, iDict):
+        self.mBatchSizeSched = iDict
         
     def getLRSched(self):
         return self.mLRSched
@@ -110,13 +188,24 @@ class ModelTrainer:
             B.set_value(self.mOptimizer.learning_rate, wLR)
             print("Learning rate set to: %s"%wLR)
         
-    def checkLossLvlSchedule(self):
+    def checkLossLvlSchedule(self, iStart=0):
         wKey = str(self.getEpoch())
         if wKey in self.mLossLvlSched.keys():
             wLossLvl = self.mLossLvlSched[wKey]
             self.setLossLvl(wLossLvl)
-            self.resetLossWatchDog()
+            if self.getEpoch()>=iStart:
+                self.resetLossWatchDog()
             
+    def checkBatchSizeSchedule(self):
+        wKey = str(self.getEpoch())
+        if wKey in self.getBatchSizeSchedule().keys():
+            wBatchSize = self.getBatchSizeSchedule()[wKey]
+            self.setBatchSize(wBatchSize)
+            
+    def setBatchSize(self, iBatchSize):
+        self.mBatchSize = iBatchSize
+        print('Batch Size set to: %s'%self.getBatchSize())
+       
     def updateLossLvlScheduleFromLoaded(self):
         wKeyList = list(self.getLossLvlSchedule().keys())
         wKeyList.reverse()
@@ -133,13 +222,15 @@ class ModelTrainer:
             wModel = self.getModel()
             wDecoderName = self.getDecoderName()
             if wDecoderName in wDict.keys():
-                wDecoder = wModel.get_layer(wDecoderName)
+                wDecoder = self.getDecoder()
                 wDecoderDict = wDict[wDecoderName]
                 for wDecoderLayer in wDecoderDict.keys():
-                    wDecoder.trainable = wDecoderDict[wDecoderLayer]
+                    wDecoder.get_layer(wDecoderLayer).trainable = wDecoderDict[wDecoderLayer]
             for wLayer in wDict.keys():
                 if wLayer != wDecoderName:
                     wModel.get_layer(wLayer).trainable = wDict[wLayer]
+            print("Updated States:")
+            self.printCurrentActualStates()
             
             
     def updateLayerStatesFromLoaded(self):
@@ -158,8 +249,7 @@ class ModelTrainer:
                 for wLayer in wDict.keys():
                     if wLayer != wDecoderName:
                         wModel.get_layer(wLayer).trainable = wDict[wLayer]
-                
-            
+                         
             
     def setLossLvl(self, iLossLvl = [1, 0]):
         #can be [1, 0], [0, 1] or [1, 1]
@@ -173,10 +263,11 @@ class ModelTrainer:
         return self.nLvls
     
     
-    def setData(self, iTrainData, iValidData, iBatchSize):
+    def setData(self, iTrainData, iValidData):
         self.mTrainData = iTrainData
         self.mValidData = iValidData
-        self.mBatchSize = iBatchSize
+        # self.mTrainData = getImageListFromBatch(iTrainData), getMapListsFromBatch(iTrainData), getNameListFromBatch(iTrainData)
+        # self.mValidData = getImageListFromBatch(iValidData), getMapListsFromBatch(iValidData), getNameListFromBatch(iValidData)
         self.mBatchLossTracker =[]
         self.mBatchAccTracker = []
         self.mTrainSize = len(iTrainData)
@@ -184,8 +275,10 @@ class ModelTrainer:
 
     def getDataNameLists(self, iTrain = True):
         oNameLists = []
-        for wData in self.getData(iTrain):
+        for wData in self.getData(iTrain):#[2]:
             oNameLists.append(wData.getNamesList())
+        # for wData in self.getData(iTrain)[2]:
+        #     oNameLists.append(wData)#.getNamesList())
         return oNameLists
         
     def genLogDataNames(self, iTrain = True, iWithPath = True):
@@ -198,7 +291,7 @@ class ModelTrainer:
                 wLogNames.append(wLogName)
         return wLogNames
 
-    def logDataNames(self, iWithPath = True):
+    def logDataNames(self, iWithPath=True):
         wLogNames = self.genLogDataNames(iTrain=True, iWithPath=iWithPath)
         
         with open(os.path.join(self.getSaveDir(), "train_files.txt"), 'w') as file:
@@ -233,7 +326,7 @@ class ModelTrainer:
     def getBatchSize(self):
         return self.mBatchSize
     
-    def setNorm(self, iNorm = 0):
+    def setNorm(self, iNorm=0):
         self.mNorm = iNorm
     
     def getNorm(self):
@@ -311,13 +404,14 @@ class ModelTrainer:
         return self.mBatchCounter
     
     def batchGenerator(self, iTrain = True):
-        wBatchGenerator = self.getBatchGen()
         wData = self.getData(iTrain)
         if iTrain:
             wSeed = self.getEpoch()
         else:
             wSeed = 0
-        return wBatchGenerator(wData, self.getBatchSize(), wSeed)
+        return self.getBatchGen()(wData, self.getBatchSize(), wSeed)
+        # print("wMapLists dims: (%s,%s,%s,%s)"%(len(wData[1]), len(wData[1][0]), len(wData[1][0][0]), len(wData[1][0][0][0])))
+        # return self.getBatchGen()(wData[0], self.getBatchSize(), wSeed), self.getBatchGen()(wData[1], self.getBatchSize(), wSeed)
 
     def computeLosses(self, iXData, iMapLists, iTrain):
         wLossList = [tf.constant(0.) for i in range(self.getNLvls())]
@@ -327,6 +421,8 @@ class ModelTrainer:
         self.resetAugWeights()
         self.resetAugActs()
         
+        self.resetVectors()
+         
         wAugments = self.getAugments(iTrain)
         wTemp = copyTemp(wAugments)
         wXDataAug = augmentXData(iXData, wAugments)
@@ -337,12 +433,16 @@ class ModelTrainer:
         wXDataAug = self.processImages(wXDataAug)
         
         iPredList = self.mModel(wXDataAug, training= iTrain)
+        
         self.processMaps(iPredList, iMapLists, wTemp)
+        
+        self.computeVectors(iPredList)        
+        
         wLossKeys = list(self.getLossDict().keys())
         if 'Pos' in wLossKeys and 'Neg' in wLossKeys:
-            self.computePosNeg(iPredList)
+            self.computePosNeg()#iPredList)
         if 'Dice' in wLossKeys:
-            self.computeDice(iPredList)
+            self.computeDice()#iPredList)
         if 'Cart' in wLossKeys:
             self.computeCart(iPredList, 1)
         if 'Pix' in wLossKeys:
@@ -355,14 +455,17 @@ class ModelTrainer:
             wDataSize = self.getTrainSize()
         else:
             wDataSize = self.getValidSize()
-        
+        if iTrain:
+            wType = 'train'
+        else:
+            wType = 'valid'
         if self.getLoadFlag():
-            if wEpoch - self.getLoadEpoch() == 1:
+            if wEpoch-self.getLoadEpoch() == 1:
                 if (wBatchCounter+1)*self.getBatchSize() >= wDataSize:
-                    self.showPlots(iXData, iPredList)
+                    self.showPlots(iXData, iPredList, wType)
                 
-        if (wBatchCounter+1)*self.getBatchSize() >= wDataSize and wEpoch%self.getPlotFreq() == 0:
-            self.showPlots(iXData, iPredList)
+        if (wBatchCounter+1)*self.getBatchSize() >= wDataSize and self.plotCondition():
+            self.showPlots(iXData, iPredList, wType)
             
     def setPlotFreq(self, iPlotFreq = 100, iPlotAll = False):
         self.mPlotFreq = iPlotFreq
@@ -381,31 +484,29 @@ class ModelTrainer:
             ioTrainableWeights.extend(wLayer.trainable_weights)
 
         return ioTrainableWeights
-    
+        
     def trainEpoch(self, iTrain = True):
 
         wBatchLossTracker = []
         self.resetBatchCounter()
+        # wBatchGenImages, wBatchGenMapLists = self.batchGenerator(iTrain)
+        # for wBatch in zip(wBatchGenImages, wBatchGenMapLists):
+        #     wXData = wBatch[0]#getImageListFromBatch(wBatch)
+        #     wMapLists = wBatch[1]#getMapListsFromBatch(wBatch)
 
         for wBatch in self.batchGenerator(iTrain):
-    
             wXData = getImageListFromBatch(wBatch)
             wMapLists = getMapListsFromBatch(wBatch)
-    
+            
+            # print(len(wXData))  
+            # print("wMapLists dims: (%s,%s,%s,%s)"%(len(wMapLists), len(wMapLists[0]), len(wMapLists[0][0]), len(wMapLists[0][0][0])))
             if iTrain:
     
                 with tf.GradientTape() as tape:
                     self.computeLosses(wXData, wMapLists, iTrain)
                
                 wLossList, wLossUpdateList = self.getLoss()
-                # wLayers = self.getModel().layers
-                # wWeights = [wLayer.trainable_weights for wLayer in wLayers]
-                # wTrainableWeights = []
-                # for wWeight in wWeights:
-                #     wTrainableWeights.extend(wWeight)
                 wTrainableWeights = self.getTrainableWeights(self.getModel().layers, [])
-                # grads = tape.gradient(wLossUpdateList, self.mModel.trainable_weights)
-                # self.mOptimizer.apply_gradients((grad, var) for (grad, var) in zip(grads, self.mModel.trainable_weights) if grad is not None)
                 grads = tape.gradient(wLossUpdateList, wTrainableWeights)
                 self.mOptimizer.apply_gradients((grad, var) for (grad, var) in zip(grads, wTrainableWeights) if grad is not None)
      
@@ -428,26 +529,42 @@ class ModelTrainer:
         wList, wName = [np.inf], ['inf']
         self.resetMinValLossList(wList, wName)    
         
-     
-    def train(self, iEpochs = (0,100), iSaveLastN = 5):
-
+    def setLogFreq(self, iLogFreq):
+        self.mLogFreq = iLogFreq
+    
+    def getLogFreq(self):
+        return self.mLogFreq
+    
+    def replayScheduleUpdatesToCurrent(self):
+        wStart = self.getEpoch()
+        for i in range(wStart):
+            self.setEpoch(i)
+            self.checkBatchSizeSchedule()
+            self.checkLRSched()
+            self.checkLossLvlSchedule(wStart)
+            self.checkLayerStates()
+        self.setEpoch(wStart)
+    
+    def train(self, iEpochs=(0,100), iSaveLastN=5):
         if not self.getLoadFlag():
-            self.resetLossWatchDog()
+            # self.resetLossWatchDog()
             self.resetLossTrackers([], [])
             self.writeInitData()
             wStart, wEnd = iEpochs
         else:
+            self.replayScheduleUpdatesToCurrent()
             wStart = self.getEpoch()
             _, wEnd = iEpochs
             if self.getSaveDir() != self.getLoadDir():
                 self.writeInitData()
+                self.loadLossLogCsv()
             
         self.setMinValSaveLastN(iSaveLastN)
         wLastN = self.getMinValSaveLastN()
-        
-        
+
         for i in range(wStart, wEnd):
             self.setEpoch(i)
+            self.checkBatchSizeSchedule()
             self.checkLRSched()
             self.checkLossLvlSchedule()
             self.checkLayerStates()
@@ -465,10 +582,24 @@ class ModelTrainer:
                         
             B.set_value(self.mOptimizer.iterations, i)
             print('ep:', self.getEpoch(), 'tr L:', np.round(wTrainLossPerEpoch,3), 'val L:', np.round(wValidLossPerEpoch,3), 'min_V:', np.round(self.getMinValLoss(), 3))
+            wLine = "{},{:.2f},{:.2f},{:.2f}\n".format(self.getEpoch(),np.round(wTrainLossPerEpoch,3), np.round(wValidLossPerEpoch,3), np.round(self.getMinValLoss(), 3))
             self.saveEveryN()
+            self.logEveryN(wLine)
             if self.checkBreak():
                 break 
     
+    def clearLossLogBuffer(self):
+        self.setLossLogBuffer([])
+    
+    def setLossLogBuffer(self, iList):
+        self.mLossLogBuffer = iList
+    
+    def getLossLogBuffer(self):
+        return self.mLossLogBuffer
+    
+    def updateLossLogBuffer(self, iTextLine):
+        self.mLossLogBuffer.append(iTextLine)
+     
     def getCkptFreq(self):
         return self.mEveryNEpochs
     
@@ -478,27 +609,71 @@ class ModelTrainer:
             wName = self.savePrint(iFlag = 'ckpt', verbose = 0)
             self.mNCkpt.write(wName)
             self.saveMeta(wName)
-        
     
-    def computePosNeg(self, iPredList):
+    def setLogFile(self, iLogFileName = 'loss_log.csv', iOption='a'):
+        self.mLogFileArgs= [os.path.join(self.getSaveDir(),iLogFileName), iOption]
+        self.clearLossLogBuffer()
+        
+    def logFile(self, iText=None, iClear=True):
+        wFile = open(*self.getLogFileArgs())
+        if iText is not None:
+            wFile.write(iText+'\n')
+        else:
+            for wText in self.getLossLogBuffer():
+                wFile.write(wText)
+            if iClear:
+                self.clearLossLogBuffer()
+        wFile.close()
+    
+    def getLogFileArgs(self):
+        return self.mLogFileArgs
+    
+    def logEveryN(self, iLine):
+        wEpoch=self.getEpoch()   
+        self.updateLossLogBuffer(iLine)
+        if (wEpoch+1)%self.getLogFreq()==0:
+            self.logFile()
+   
+    def computeVectors(self, iPredList):
+        wLossLvl = self.getLossLvl()       
+        for i, wLvl in zip(range(len(wLossLvl)), wLossLvl):
+            if wLvl:
+                wPredVect, wMapVect, wActVect = getVectors(iPredList[i][..., 0],  self.getAugMaps(i), self.getAugActs(i))
+                self.updateVectors(i, wPredVect, wMapVect, wActVect)
+
+    def updateVectors(self, iIdx, iPredVect, iMapVect, iActVect):
+        self.updatePredVect(iIdx, iPredVect)
+        self.updateAugMapsVect(iIdx, iMapVect)
+        self.updateAugActsVect(iIdx, iActVect)
+        
+    def resetVectors(self):
+        self.resetPredVect()
+        self.resetAugMapsVect()
+        self.resetAugActsVect()
+        
+    def computePosNeg(self):#, iPredList):
         wLossLvl = self.getLossLvl()
         wLossDict = self.getLossDict()
         
         for i, wLvl in zip(range(len(wLossLvl)), wLossLvl):
             if wLvl:
-                wPos, wNeg = tensor_pos_neg_loss(iPredList[i][..., 0],  self.getAugMaps(i), self.getAugActs(i))
+                # wPos, wNeg = tensor_pos_neg_loss(iPredList[i][..., 0],  self.getAugMaps(i), self.getAugActs(i))
+                wVectMap, wVectAct = self.getAugMapsVect(i), self.getAugActsVect(i)
+                wPos, wNeg = tensorPosNegLoss(self.getPredVect(i), wVectMap, wVectAct, 1-wVectMap, 1-wVectAct)
                 wLoss = wPos + wNeg
                 wLossUpdate = wLossDict['Pos']*wPos + wLossDict['Neg']*wNeg
                 self.incrementLoss(i, wLoss, wLossUpdate)
 
                 
-    def computeDice(self, iPredList):
+    def computeDice(self):#, iPredList):
         wLossLvl = self.getLossLvl()
         wLossDict = self.getLossDict()
 
         for i, wLvl in zip(range(len(wLossLvl)), wLossLvl):
             if wLvl:
-                wDice = tensor_dice_loss(iPredList[i][..., 0],  self.getAugMaps(i), self.getAugWeights(i))
+                # wDice = tensor_dice_loss(iPredList[i][..., 0],  self.getAugMaps(i), self.getAugWeights(i))
+                wVectMap, wVectAct = self.getAugMapsVect(i), self.getAugActsVect(i)
+                wDice = tensorDiceLoss(self.getPredVect(i), wVectMap, wVectAct, 1-wVectMap, 1-wVectAct)
                 wLoss = wDice
                 wLossUpdate = wLossDict['Dice']*wDice
                 self.incrementLoss(i, wLoss, wLossUpdate)
@@ -526,40 +701,82 @@ class ModelTrainer:
                 wLossUpdate = wLossDict['Pix']*wPix
                 self.incrementLoss(i, wLoss, wLossUpdate)
     
+    def updateAllMapsFromPred(self, iPredList, iMapLists, iTemp, iIdx):
+        wDimGrid = tuple(iPredList[iIdx][0, ..., 0].shape[0:2])
+        wMapAugList, wWeightList, _ = ProcessMapList3D(iMapLists[iIdx], self.mDim, wDimGrid, copyTemp(iTemp))
+        wActList = act_list_3D(wMapAugList)
+        self.updateAugMaps(iIdx, wMapAugList)
+        self.updateAugWeights(iIdx, wWeightList)
+        self.updateAugActs(iIdx, wActList)
+        
+   
+    def plotCondition(self):
+        return (self.getEpoch()+1)%self.getPlotFreq()==0
+    
     def processMaps(self, iPredList, iMapLists, iTemp):
         wLossLvl = self.getLossLvl()
-
         for i, wLvl in zip(range(len(wLossLvl)), wLossLvl):
-            if self.getPlotAll() and self.getEpoch()%self.getPlotFreq() == 0:
-                wDimGrid = tuple(iPredList[i][0, ..., 0].shape[0:2])
-                wMapAugList, wWeightList, _ = ProcessMapList3D(iMapLists[i], self.mDim, wDimGrid, copyTemp(iTemp))
-                wActList = act_list_3D(wMapAugList)
-                self.updateAugMaps(i, wMapAugList)
-                self.updateAugWeights(i, wWeightList)
-                self.updateAugActs(i, wActList)
+            
+            if self.getPlotAll() and self.plotCondition():
+                self.updateAllMapsFromPred(iPredList, iMapLists, iTemp, i)
+            
             elif self.getPlotAll() and self.getLoadFlag():
                 if self.getEpoch() - self.getLoadEpoch() == 1:
-                    wDimGrid = tuple(iPredList[i][0, ..., 0].shape[0:2])
-                    wMapAugList, wWeightList, _ = ProcessMapList3D(iMapLists[i], self.mDim, wDimGrid, copyTemp(iTemp))
-                    wActList = act_list_3D(wMapAugList)
-                    self.updateAugMaps(i, wMapAugList)
-                    self.updateAugWeights(i, wWeightList)
-                    self.updateAugActs(i, wActList)          
+                    self.updateAllMapsFromPred(iPredList, iMapLists, iTemp, i)
+        
                 elif wLvl:
-                    wDimGrid = tuple(iPredList[i][0, ..., 0].shape[0:2])
-                    wMapAugList, wWeightList, _ = ProcessMapList3D(iMapLists[i], self.mDim, wDimGrid, copyTemp(iTemp))
-                    wActList = act_list_3D(wMapAugList)
-                    self.updateAugMaps(i, wMapAugList)
-                    self.updateAugWeights(i, wWeightList)
-                    self.updateAugActs(i, wActList)
+                    self.updateAllMapsFromPred(iPredList, iMapLists, iTemp, i)
+
             elif wLvl:
-                wDimGrid = tuple(iPredList[i][0, ..., 0].shape[0:2])
-                wMapAugList, wWeightList, _ = ProcessMapList3D(iMapLists[i], self.mDim, wDimGrid, copyTemp(iTemp))
-                wActList = act_list_3D(wMapAugList)
-                self.updateAugMaps(i, wMapAugList)
-                self.updateAugWeights(i, wWeightList)
-                self.updateAugActs(i, wActList)
+                self.updateAllMapsFromPred(iPredList, iMapLists, iTemp, i)
+
                 
+    def resetPredVect(self, iPredVectLists=None):
+        
+        if iPredVectLists is None:
+            wPredVectLists = [None]*self.getNLvls()
+        else:
+            wPredVectLists = iPredVectLists
+        
+        self.mPredVectLists = wPredVectLists
+        
+    def updatePredVect(self, iIdx, iPredVect):
+        self.mPredVectLists[iIdx] = iPredVect
+        
+    def getPredVect(self, iIdx):
+        return self.mPredVectLists[iIdx]
+    
+    def resetAugMapsVect(self, iMapAugVectLists = None):
+        
+        if iMapAugVectLists is None:
+            wMapAugVectLists = [None]*self.getNLvls()
+        else:
+            wMapAugVectLists = iMapAugVectLists
+        
+        self.mMapAugVectLists = wMapAugVectLists
+        
+    def updateAugMapsVect(self, iIdx, iAugMapVect):
+        self.mMapAugVectLists[iIdx] = iAugMapVect
+        
+        
+    def getAugMapsVect(self, iIdx):
+        return self.mMapAugVectLists[iIdx]
+        
+    def resetAugActsVect(self, iActAugVectLists = None):
+        
+        if iActAugVectLists is None:
+            wActAugVectLists = [None]*self.getNLvls()
+        else:
+            wActAugVectLists = iActAugVectLists
+        
+        self.mActAugVectLists = wActAugVectLists
+        
+    def updateAugActsVect(self, iIdx, iAugActVect):
+        self.mActAugVectLists[iIdx] = iAugActVect
+        
+    def getAugActsVect(self, iIdx):
+        return self.mActAugVectLists[iIdx]
+    
     def resetAugMaps(self, iMapAugLists = None):
         
         if iMapAugLists is None:
@@ -578,10 +795,11 @@ class ModelTrainer:
         
         self.mActAugLists = wActAugLists
     
+    
     def updateAugActs(self, iIdx, iActAug):
         self.mActAugLists[iIdx] = iActAug
         
-    
+
     def resetAugWeights(self, iWeightAugLists = None):
         
         if iWeightAugLists is None:
@@ -616,20 +834,57 @@ class ModelTrainer:
         
     def getLoss(self):
         return self.mLossList, self.mLossUpdateList
+    
+    def setFromShell(self, iFromShell):
+        self.mFromShell=iFromShell
         
+    def getFromShell(self):
+        return self.mFromShell
      
-    def showPlots(self, iXData, iPredList):
-        show_batch(list(iXData))
+    def showPlots(self, iXData, iPredList, iType):
         wLossLvl = self.getLossLvl()
-        for i, wLvl in zip(range(len(wLossLvl)), wLossLvl):
-            if self.getPlotAll():
-                show_batch(flat_map_list_v2(self.getAugMaps(i)))
-                show_batch(flat_map_list_v2(self.getAugActs(i)))
-                show_batch(iPredList[i][..., 0].numpy()[..., None])
-            elif wLvl:
-                show_batch(flat_map_list_v2(self.getAugMaps(i)))
-                show_batch(flat_map_list_v2(self.getAugActs(i)))
-                show_batch(iPredList[i][..., 0].numpy()[..., None])
+        if not self.getFromShell():
+            show_batch(list(iXData))
+            for i, wLvl in zip(range(len(wLossLvl)), wLossLvl):
+                if self.getPlotAll():
+                    show_batch(flat_map_list_v2(self.getAugMaps(i)))
+                    show_batch(flat_map_list_v2(self.getAugActs(i)))
+                    show_batch(iPredList[i][..., 0].numpy()[..., None])
+                elif wLvl:
+                    show_batch(flat_map_list_v2(self.getAugMaps(i)))
+                    show_batch(flat_map_list_v2(self.getAugActs(i)))
+                    show_batch(iPredList[i][..., 0].numpy()[..., None])
+        else:
+            print('Saving %s plots'%iType)
+            try:
+                wSaveDir=self.getSaveDir()
+                wTrainingPlotsFolder = '%s_plots'%iType
+                wTrainingPlotsPath = os.path.join(wSaveDir, wTrainingPlotsFolder)
+                if os.path.isdir(wTrainingPlotsPath):
+                    rmtree(wTrainingPlotsPath)
+                os.makedirs(wTrainingPlotsPath)
+                
+                wXData = list(iXData)
+                
+                self.saveBatchPlots(wTrainingPlotsPath, get_batch_plots(wXData), iType='a_input', iIdx=0)
+                for i, wLvl in zip(range(len(wLossLvl)), wLossLvl):
+                    if self.getPlotAll():
+                        self.saveBatchPlots(wTrainingPlotsPath, get_batch_plots(flat_map_list_v2(self.getAugMaps(i))), iType='b_maps', iIdx=i)
+                        self.saveBatchPlots(wTrainingPlotsPath, get_batch_plots(flat_map_list_v2(self.getAugActs(i))), iType='c_acts', iIdx=i)
+                        self.saveBatchPlots(wTrainingPlotsPath, get_batch_plots(iPredList[i][..., 0].numpy()[..., None]), iType='d_preds', iIdx=i)                    
+                    elif wLvl:
+                        self.saveBatchPlots(wTrainingPlotsPath, get_batch_plots(flat_map_list_v2(self.getAugMaps(i))), iType='b_maps', iIdx=i)
+                        self.saveBatchPlots(wTrainingPlotsPath, get_batch_plots(flat_map_list_v2(self.getAugActs(i))), iType='c_acts', iIdx=i)
+                        self.saveBatchPlots(wTrainingPlotsPath, get_batch_plots(iPredList[i][..., 0].numpy()[..., None]), iType='d_preds', iIdx=i)                    
+            except PermissionError:
+                print("Permission Error, failed to save plots, will try on next checkpoint")
+            
+    def saveBatchPlots(self, iPlotDir, iPlt, iType, iIdx):
+            wName = "{}_res_{}_epoch_{}.png".format(iType,adjust_number(iIdx, 2), adjust_number(self.getEpoch(), 4))
+            wPath = os.path.join(iPlotDir, wName)
+            iPlt.savefig(wPath)
+            iPlt.close()
+            
               
     def checkTrainLoss(self, iTrainLossPerEpoch):
         if(iTrainLossPerEpoch < self.getMinTrainLoss()):
@@ -777,9 +1032,7 @@ class ModelTrainer:
             
             self.resetMinValLossList(wMinValLossList, wMinValLossNameList)
             self.saveMeta(wSavePath)
-            # oDataDict = self.genMetaDict()
-            # wSavePath = wSavePath + '_meta.dump'
-            # dump(oDataDict, wSavePath)
+
         
    
     def savePrint(self, iFlag = '', verbose = 1):
@@ -871,6 +1124,7 @@ class ModelTrainer:
         self.setLRSchedFromDict(iSchedDict['lr'])
         self.setLossLvlScheduleFromDict(iSchedDict['loss level'])
         self.setLayerFreezeScheduleFromDict(iSchedDict['layer states'])
+        self.setBatchSizeScheduleFromDict(iSchedDict['batch size'])
         
     def loadMeta(self, iLoadFile):
         wLoadPath = os.path.join(self.getLoadDir(), iLoadFile)
@@ -908,12 +1162,53 @@ class ModelTrainer:
         self.loadInit(iLoadFile)
         self.updateLayerStatesFromLoaded()
         self.updateLossLvlScheduleFromLoaded()
+        self.printCurrentActualStates()
         
+    def getBackBone(self):
+        return self.getModel().layers[:-1]
+    
+    def printCurrentActualStates(self):
+
+        wHeader = f"{'Name':^10} {'Trainable':^12}"
+        print(wHeader)
+        print('-'*len(wHeader))
+        print(f"{'Backbone':^{len(wHeader)}}")
+        wPrevName =  ''
+        for wLayer in self.getBackBone():
+            wCurrentName = wLayer.name.split('_')[0]
+            if wCurrentName != wPrevName:
+                print(f"{wLayer.name:10.10s}|{wLayer.trainable:12}")
+                print(f"{'...':^{len(wHeader)}}")
+            wPrevName = wCurrentName
+            
+        print(f"{'Decoder':^{len(wHeader)}}")
+        for wLayer in self.getDecoderLayers():
+            if wLayer.name.split('_')[0] not in ['dropout', 'concatenate', 'softmax']:
+                print(f"{wLayer.name:10.8s}|{wLayer.trainable:12}")            
+            
+   
+    def loadLossLogCsv(self, iFileName='loss_log.csv'):
+        try:
+            wFile = open(os.path.join(self.getLoadDir(), iFileName), 'r')
+            for wLine in wFile:
+                wFirstElement = wLine.split(',')[0]
+                if wFirstElement.lower() != 'epoch':
+                    wInt = int(wFirstElement)
+                    if wInt < self.getEpoch():
+                        self.updateLossLogBuffer(wLine)
+            self.logFile()
+        except FileNotFoundError as wError:
+            print(f"{wError}: Log file does not exist.")
+            
+    def logArray(self):
+        pass
             
     def printSetupInfo(self):
         print('Model Flag: %s'%self.getModelFlag())
         print("\nLR rate sched:")
         print(self.getLRSched())
+        print("\nBatch Size sched:")
+        print(self.getBatchSizeSchedule()) 
         print("\nLoss Types:")
         print(self.getLossDict())
         print("\nLoss level sched:")        
@@ -924,20 +1219,104 @@ class ModelTrainer:
         wStateLen = len(wKeyList)
         for i, wKey in zip(range(wStateLen),wKeyList):
             wNames=[]
+            wStates = []
             for wKey2 in wLayerStateDict[wKey]:
                 wNames.append(wKey2)
-            wState = wLayerStateDict[wKey][wKey2]
+                wStates.append(wLayerStateDict[wKey][wKey2])
             if wStateLen > 20:
                 wDen = 8
                 wP1, wP2, wP3, wP4 = int(wStateLen/wDen) , int((wDen-1)*wStateLen/(2*wDen)), int((wDen+1)*wStateLen/(2*wDen)), int((wDen-1)*wStateLen/wDen)
                 if i<wP1 or (i>wP2 and i<wP3) or i>wP4:
-                    print(wKey, wNames, wState)
+                    wPrintNames, wPrintStates = shortenNames(wNames, wStates)
+                    print(wKey, wPrintNames, wPrintStates)
                 elif i==wP1 or i== int((wP2+wP3)/2) or i==wP4: 
                     print("...")
             else: 
-                print(wKey, wNames, wState)
+                wPrintNames, wPrintStates = shortenNames(wNames, wStates)
+                print(wKey, wPrintNames, wPrintStates)
+
+def shortenNames(iNames, iStates):
+    wPrev=None
+    wPrevName=''
+    wPrintNames=[]
+    wPrintStates=[]
+    for wName, wState in zip(iNames[:-1], iStates[:-1]):
+        if wState!= wPrev:
+            if wPrevName !='':
+                wPrintNames.append(wPrevName)
+                wPrintStates.append(wPrev)
+            wPrintNames.append(wName)
+            wPrintNames.append('...')
+            wPrintStates.append(wState)
+            wPrintStates.append('...')
+        wPrev = wState
+        wPrevName = wName
+    wPrintNames.append(iNames[-1])
+    wPrintStates.append(iStates[-1])  
+    
+    return wPrintNames, wPrintStates
+
+class ModelTransLearn(ModelTrainer):
+    def __init__(self, iModel, iOptimizer):
+        super().__init__(iModel, iOptimizer)
+        
+        
+    def getDecoder(self):
+        return self.getModel().layers[-1]
+    def getDecoderLayers(self):
+        return self.getDecoder().layers
+    
+    def removeClassificationLayers(self, iBackBoneOutputIdxList, iDecoderClassLayerNameList):
+        wModel = self.getModel()
+        wNewModel = removeClassificationLayers(wModel, iBackBoneOutputIdxList, iDecoderClassLayerNameList)
+        self.mModel = wNewModel
+
+        
+    def addTransferLearnLayers(self, iBackBoneOutputIdxList, iDecoderClassLayerNameList, iDepthList, iKernelList):
+        wModel = self.getModel()
+        wNewModel = addTransferLearnLayersV3(wModel, iBackBoneOutputIdxList, iDecoderClassLayerNameList, iDepthList, iKernelList)
+        self.mModel = wNewModel
+        self.initCkptData()
+
+    
+    def setTransferLearnLoadPath(self, iLoadPath):
+        self.mTransferLearnLoadPath = iLoadPath
+        
+    def getTransferLearnLoadPath(self):
+        return self.mTransferLearnLoadPath
+    
+    def loadTransferLearn(self):
+        wLoadPath = os.path.join(self.getTransferLearnLoadPath())
+        wLoader = Checkpoint(model = self.getModel())
+        # print('load path is :%s'%wLoadPath)
+        wLoader.read(wLoadPath).expect_partial()
+        self.getModel().trainable=False
+
+    def freezeBackBone(self):
+        for wLayer in self.getBackBone():
+            wLayer.trainable=False
             
-            
+    def genMetaDict(self):
+        wDict = super().genMetaDict()
+        wDict.update({'load': self.getTransferLearnLoadPath()})
+        return wDict
+
+    def loadMeta(self, iLoadFile):
+        wLoadPath = os.path.join(self.getLoadDir(), iLoadFile)
+        wDataDict = load(wLoadPath + '_meta.dump')
+        wValDict = wDataDict['val']
+        wTrainDict = wDataDict['train']
+        self.setMinValLoss(wValDict['min'])
+        self.setMinValLossName(wValDict['name'])
+        self.resetMinValLossList(wValDict['list'], wValDict['names'])
+        self.resetMinValLossCounter(wValDict['counter'])
+        self.setMinTrainLoss(wTrainDict['min'])
+        self.resetMinTrainLossCounter(wTrainDict['counter'])
+        self.resetLossTrackers(wTrainDict['tracker'], wValDict['tracker'])
+        self.setTransferLearnLoadPath(wDataDict['load'])
+        
+
+        
 class ModelEvaluator(ModelTrainer):
     def __init__(self, iModel, iOptimizer):
         super().__init__(iModel, iOptimizer)
@@ -976,9 +1355,10 @@ class ModelEvaluator(ModelTrainer):
         self.setLoadFlag(True)
         wLoadPath = os.path.join(self.getLoadDir(), iLoadFile)
         wLoader = Checkpoint(model = self.getModel(), optimizer= self.getOptimizer())
-        wLoader.read(wLoadPath)
+        wLoader.read(wLoadPath).expect_partial()
         self.loadInit()
         self.getModel().trainable = False
+
 
         
     def loadInit(self):
@@ -989,6 +1369,7 @@ class ModelEvaluator(ModelTrainer):
         self.setBreakEpochsVal(np.inf)
         wSchedDict = wDict['sched']
         self.loadSchedules(wSchedDict)
+        
         
     def showPlots(self, iXData, iPredList, iIdx):
         if self.getShowPlots():
@@ -1555,6 +1936,15 @@ class ModelEvaluator(ModelTrainer):
             for wName in wLogNames:
                 fwriting.write_file(wName)
         
+        
+class ModelTransLearnEvaluator(ModelEvaluator, ModelTransLearn):
+    def __init__(self, iModel, iOptimizer):
+        super().__init__(iModel, iOptimizer)
+        super(ModelEvaluator, self).__init__(iModel, iOptimizer)
+        
+        
+    def getNLvls(self):
+        return len(self.getDecoderResolutions())
             
 if __name__ == '__main__':
     pass

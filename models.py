@@ -1,7 +1,7 @@
 from __future__ import absolute_import, division, print_function, unicode_literals
 import os
 
-
+from helper import adjust_number
 """#-----------------------------------Tensorflow Part-------------------------------------"""
 
 import tensorflow as tf    
@@ -22,7 +22,7 @@ def save_model_summary(save_dir, model):
         model.summary(print_fn = fwriting.write_file)
         
         
-def makeYoloType(iShape, iFlag = 'resnet', iRes = 1):
+def makeYoloType(iShape, iFlag = 'resnet', iRes = 2):
     H, W, C = iShape
     
     if iFlag == 'resnet':
@@ -36,11 +36,11 @@ def makeYoloType(iShape, iFlag = 'resnet', iRes = 1):
         
     base_model.trainable = False
     
-    if iRes == 1:
+    if iRes == 2:
         base_model2 = tf.keras.models.Model([base_model.inputs], [base_model.output, base_model.layers[index].output], name = 'base_model2')
         base_model2.trainable = False
         top_model = make_top_model_v2(base_model2.output[0].shape[1:], base_model2.output[1].shape[1:])
-    elif iRes == 2:
+    elif iRes == 3:
         base_model2 = tf.keras.models.Model([base_model.inputs], [base_model.output, base_model.layers[index].output,  base_model.layers[index2].output], name = 'base_model2')
         base_model2.trainable = False
         top_model = make_top_model_v3(base_model2.output[0].shape[1:], base_model2.output[1].shape[1:], base_model2.output[2].shape[1:])
@@ -61,7 +61,7 @@ def make_top_model_v2(base_model_output_shape, base_model_layeri_output_shape):
     
    
     xup = x
-    x = tf.keras.layers.Conv2D(2,(1,1), padding = "same", name='top_out_1')(x)
+    x = tf.keras.layers.Conv2D(2,(1,1), padding = "same", name='top_out_1', kernel_regularizer=tf.keras.regularizers.l2(1e-6), kernel_constraint=tf.keras.constraints.min_max_norm(min_value=1e-30, max_value=1.0))(x)
     x = tf.keras.layers.Softmax(axis = -1)(x)
     
     input_from_layeri = tf.keras.Input(shape=base_model_layeri_output_shape, name = 'input_from_base_layeri')
@@ -84,7 +84,7 @@ def make_top_model_v2(base_model_output_shape, base_model_layeri_output_shape):
     x5 = tf.keras.layers.Dropout(0.5)(x5)
 
     
-    x5 = tf.keras.layers.Conv2D(2,(1,1), padding = "same", name='top_out_2')(x5)
+    x5 = tf.keras.layers.Conv2D(2,(1,1), padding = "same", name='top_out_2', kernel_regularizer=tf.keras.regularizers.l2(1e-6), kernel_constraint=tf.keras.constraints.min_max_norm(min_value=1e-30, max_value=1.0))(x5)
     x5 = tf.keras.layers.Softmax(axis = -1)(x5)
     
     return tf.keras.models.Model([input1, input_from_layeri], [x,x5], name = 'top_model')
@@ -93,16 +93,20 @@ def make_top_model_v3(base_model_output_shape, base_model_layeri_output_shape, b
     #x is a tensor
     input1 = tf.keras.Input(shape = base_model_output_shape, name = "input_to_top")
 
-    x = tf.keras.layers.Conv2D(256,(1,1), activation = 'relu', padding = "same", name='top_14')(input1)
+    x = tf.keras.layers.Conv2D(256,(1,1), activation = 'relu', padding = "same", name='top_11')(input1)
     x = tf.keras.layers.Dropout(0.5)(x)
-    x = tf.keras.layers.Conv2D(256,(3,3), activation = 'relu', padding = "same", name='top_15')(x)
+    x = tf.keras.layers.Conv2D(512,(3,3), activation = 'relu', padding = "same", name='top_12')(x)
+    x = tf.keras.layers.Dropout(0.5)(x)    
+    x = tf.keras.layers.Conv2D(256,(1,1), activation = 'relu', padding = "same", name='top_13')(x)
     x = tf.keras.layers.Dropout(0.5)(x)
-    x = tf.keras.layers.Conv2D(128,(1,1), activation = 'relu', padding = "same", name='top_16')(x)
+    x = tf.keras.layers.Conv2D(256,(3,3), activation = 'relu', padding = "same", name='top_14')(x)
+    x = tf.keras.layers.Dropout(0.5)(x)
+    x = tf.keras.layers.Conv2D(128,(1,1), activation = 'relu', padding = "same", name='top_15')(x)
     x = tf.keras.layers.Dropout(0.5)(x)
     
    
     xup = x
-    x = tf.keras.layers.Conv2D(2,(1,1), padding = "same", name='top_out_1')(x)
+    x = tf.keras.layers.Conv2D(2,(1,1), padding = "same", name='top_out_1')(x)#, kernel_regularizer=tf.keras.regularizers.l2(1e-6), kernel_constraint=tf.keras.constraints.min_max_norm(min_value=1e-30, max_value=1.0))(x)
     x = tf.keras.layers.Softmax(axis = -1)(x)
     
     input_from_layeri = tf.keras.Input(shape=base_model_layeri_output_shape, name = 'input_from_base_layeri')
@@ -114,20 +118,25 @@ def make_top_model_v3(base_model_output_shape, base_model_layeri_output_shape, b
     x1 = tf.keras.layers.concatenate([x1,x_reduce_dim],axis = 3)
     
 
-    x1 = tf.keras.layers.Conv2D(128,(1,1), activation = 'relu', padding = "same", name='top_22')(x1)
+    x1 = tf.keras.layers.Conv2D(128,(1,1), activation = 'relu', padding = "same", name='top_21')(x1)
     x1 = tf.keras.layers.Dropout(0.5)(x1)
-    x1 = tf.keras.layers.Conv2D(256,(3,3), activation = 'relu', padding = "same", name='top_23')(x1)
+    x1 = tf.keras.layers.Conv2D(256,(3,3), activation = 'relu', padding = "same", name='top_22')(x1)
     x1 = tf.keras.layers.Dropout(0.5)(x1)
-
-    x1 = tf.keras.layers.Conv2D(256,(3,3), activation = 'relu', padding = "same", name='top_28')(x1)
+    x1 = tf.keras.layers.Conv2D(256,(1,1), activation = 'relu', padding = "same", name='top_23')(x1)
     x1 = tf.keras.layers.Dropout(0.5)(x1)
-    x1 = tf.keras.layers.Conv2D(128,(1,1), activation = 'relu', padding = "same", name='top_29')(x1)
+    x1 = tf.keras.layers.Conv2D(512,(3,3), activation = 'relu', padding = "same", name='top_24')(x1)
+    x1 = tf.keras.layers.Dropout(0.5)(x1)
+    x1 = tf.keras.layers.Conv2D(256,(1,1), activation = 'relu', padding = "same", name='top_25')(x1)
+    x1 = tf.keras.layers.Dropout(0.5)(x1)
+    x1 = tf.keras.layers.Conv2D(256,(3,3), activation = 'relu', padding = "same", name='top_26')(x1)
+    x1 = tf.keras.layers.Dropout(0.5)(x1)
+    x1 = tf.keras.layers.Conv2D(128,(1,1), activation = 'relu', padding = "same", name='top_27')(x1)
     x1 = tf.keras.layers.Dropout(0.5)(x1)
     
     xup = x1
 
     
-    x1 = tf.keras.layers.Conv2D(2,(1,1), padding = "same", name='top_out_2')(x1)
+    x1 = tf.keras.layers.Conv2D(2,(1,1), padding = "same", name='top_out_2')(x1)#, kernel_regularizer=tf.keras.regularizers.l2(1e-6), kernel_constraint=tf.keras.constraints.min_max_norm(min_value=1e-30, max_value=1.0))(x1)
     x1 = tf.keras.layers.Softmax(axis = -1)(x1)
     
     
@@ -145,44 +154,291 @@ def make_top_model_v3(base_model_output_shape, base_model_layeri_output_shape, b
     x2 = tf.keras.layers.Dropout(0.5)(x2)
     x2 = tf.keras.layers.Conv2D(256,(3,3), activation = 'relu', padding = "same", name='top_32')(x2)
     x2 = tf.keras.layers.Dropout(0.5)(x2)
-
-    x2 = tf.keras.layers.Conv2D(256,(3,3), activation = 'relu', padding = "same", name='top_33')(x2)
+    x2 = tf.keras.layers.Conv2D(256,(1,1), activation = 'relu', padding = "same", name='top_33')(x2)
     x2 = tf.keras.layers.Dropout(0.5)(x2)
-    x2 = tf.keras.layers.Conv2D(128,(1,1), activation = 'relu', padding = "same", name='top_34')(x2)
+    x2 = tf.keras.layers.Conv2D(512,(3,3), activation = 'relu', padding = "same", name='top_34')(x2)
+    x2 = tf.keras.layers.Dropout(0.5)(x2)
+    x2 = tf.keras.layers.Conv2D(256,(1,1), activation = 'relu', padding = "same", name='top_35')(x2)
+    x2 = tf.keras.layers.Dropout(0.5)(x2)
+    x2 = tf.keras.layers.Conv2D(256,(3,3), activation = 'relu', padding = "same", name='top_36')(x2)
+    x2 = tf.keras.layers.Dropout(0.5)(x2)
+    x2 = tf.keras.layers.Conv2D(128,(1,1), activation = 'relu', padding = "same", name='top_37')(x2)
     x2 = tf.keras.layers.Dropout(0.5)(x2)
     
-    x2 = tf.keras.layers.Conv2D(2,(1,1), padding = "same", name='top_out_3')(x2)
+    x2 = tf.keras.layers.Conv2D(2,(1,1), padding = "same", name='top_out_3')(x2)#, kernel_regularizer=tf.keras.regularizers.l2(1e-6), kernel_constraint=tf.keras.constraints.min_max_norm(min_value=1e-30, max_value=1.0))(x2)
     x2 = tf.keras.layers.Softmax(axis = -1)(x2)
     
     return tf.keras.models.Model([input1, input_from_layeri, input_from_layeri2], [x, x1, x2], name = 'top_model')
 
 
 
-"""
-base_model = ResNet50(include_top=False, input_shape=(448,448,3),pooling='None',weights='imagenet')
 
-# layerName = "conv4_block6_out"
-# base_model.get_layer(name = layerName).output.shape
-# index = None
-# for idx, layer in enumerate(base_model.layers):
-#     if layer.name == layerName:
-#         index = idx
+def removeClassificationLayers(iEncoderDecoder, iEncoderOutputIdxList, iDecoderOutputNames):
+    wEncoderOutputs = [iEncoderDecoder.layers[wIdx].output for wIdx in iEncoderOutputIdxList]
+    wEncoder = tf.keras.models.Model([iEncoderDecoder.inputs], wEncoderOutputs, name='base_model2')
+    wDecoderOutputs = [iEncoderDecoder.layers[-1].get_layer(wName).output for wName in iDecoderOutputNames]
+    wDecoder = tf.keras.models.Model(iEncoderDecoder.layers[-1].input, wDecoderOutputs, name=iEncoderDecoder.layers[-1].name)
+    wX = wDecoder(wEncoder.output)
+    return tf.keras.models.Model(wEncoder.input, wX, name='interim')
+
+def removeClassificationLayersV2(iEncoderDecoder, iEncoderOutputIdxList, iDecoderOutputNames):
+    wEncoderOutputs = [iEncoderDecoder.layers[wIdx].output for wIdx in iEncoderOutputIdxList]
+    wEncoder = tf.keras.models.Model([iEncoderDecoder.inputs], wEncoderOutputs, name='base_model2')
+    wDecoderOutputs = [iEncoderDecoder.layers[-1].get_layer(wName).output for wName in iDecoderOutputNames]
+    wDecoder = tf.keras.models.Model(iEncoderDecoder.layers[-1].input, wDecoderOutputs, name=iEncoderDecoder.layers[-1].name)
+    wInput = tf.keras.Input(shape=iEncoderDecoder.input.shape[1:], name='input')
+
+    wX = wEncoder(wInput)
+    
+    wX = wDecoder(wX)
+    return tf.keras.models.Model(wInput, wX, name='interim')
+
+def addTransferLearnLayers(iModel, iDepthList, iKernelList, iActivation='relu', iPadding='same', iDropout=0.5, iPrefix='translearn'):
+    wX = iModel(iModel.input)
+    wOutList = []
+    i=1
+    for wXi in wX:
+        wName = '_'.join([iPrefix, adjust_number(i,2)])
+        wOut = addConv2DBlock(wXi, iDepthList, iKernelList, iActivation, iPadding, iDropout, wName)
+        wOut = tf.keras.layers.Conv2D(2, 1, padding=iPadding, name=f'{iPrefix}_out_{i+1}')(wOut)
+        wOutList.append(tf.keras.layers.Softmax(axis=-1)(wOut))
+        i+=1
+    return tf.keras.models.Model(iModel.input, wOutList, name='transfer_learn_model')
+
+def addTransferLearnLayersV2(iModel, iDepthList, iKernelList, iActivation='relu', iPadding='same', iDropout=0.5, iPrefix='tl'):
+    wX = iModel(iModel.input)
+    wInputList=[]
+    for i in range(len(wX)):
+        wInputList.append(tf.keras.Input(shape=wX[i].shape[1:], name=f'input_tl_{i+1}'))
+    wOutList = []
+    i=1
+    for wXi in wInputList:
+        wName = '_'.join([iPrefix, adjust_number(i,2)])
+        wOut = addConv2DBlock(wXi, iDepthList, iKernelList, iActivation, iPadding, iDropout, wName)
+        wOut = tf.keras.layers.Conv2D(2, 1, padding=iPadding, name=f'{iPrefix}_out_{i+1}')(wOut)
+        wOutList.append(tf.keras.layers.Softmax(axis=-1)(wOut))
+        i+=1
+    wTLModel = tf.keras.models.Model(wInputList, wOutList, name='tl_model')
+    wX= wTLModel(wX)
+    
+    return tf.keras.models.Model(iModel.input, wX, name='full_tl_model')
+
+def addTransferLearnLayersV3(iModel, iEncoderOutputIdxList, iDecoderOutputNames, iDepthList, iKernelList, iActivation='relu', iPadding='same', iDropout=0.5, iPrefix='tl'):
+    wEncoderOutputs = [iModel.layers[i].output for i in iEncoderOutputIdxList]
+    wEncoder = tf.keras.models.Model([iModel.inputs], wEncoderOutputs, name='base_model2')
+    wDecoderOutputs = [iModel.layers[-1].get_layer(wName).output for wName in iDecoderOutputNames]
+    wDecoder = tf.keras.models.Model(iModel.layers[-1].input, wDecoderOutputs, name=iModel.layers[-1].name)
+    # wInput = tf.keras.Input(shape=iModel.input.shape[1:], name='input') 
+    # wX = wEncoder(wInput)
+    # wX = wDecoder(wX)
+    wX = wDecoder(wEncoder.output)
+    wInputList=[]
+    
+    for i in range(len(wX)):
+        wInputList.append(tf.keras.Input(shape=wX[i].shape[1:], name=f'input_tl_{i+1}'))
+    wOutList = []
+    i=1
+    for wXi in wInputList:
+        wName = '_'.join([iPrefix, adjust_number(i,2)])
+        wOut = addConv2DBlock(wXi, iDepthList, iKernelList, iActivation, iPadding, iDropout, wName)
+        wOut = tf.keras.layers.Conv2D(2, 1, padding=iPadding, name=f'{iPrefix}_out_{i+1}')(wOut)
+        wOutList.append(tf.keras.layers.Softmax(axis=-1)(wOut))
+        i+=1
+    wTLModel = tf.keras.models.Model(wInputList, wOutList, name='tl_model')
+
+    wX = wTLModel(wX)
+    
+    return tf.keras.models.Model(wEncoder.input, wX, name='full_tl_model')
+
+        
+def addConv2DBlock(iInput, iDepthList, iKernelList, iActivation='relu', iPadding='same', iDropout=0.5, iNamePrefix='top', iNameList=None):
+    wX = iInput
+    
+    for i in range(len(iDepthList)):
+        wDepth = iDepthList[i]
+        wPool = iKernelList[i]
+        if iNameList is not None:
+            wName = iNameList[i]
+        else:
+            wName = '_'.join([iNamePrefix, adjust_number(i,2)])
+        wX =tf.keras.layers.Conv2D(wDepth, wPool, activation=iActivation, padding=iPadding, name=wName)(wX)
+        if iDropout:
+            wX = tf.keras.layers.Dropout(iDropout, name='_'.join(['dropout']+wName.split('_')[1:]))(wX)
+    return wX
+
+def addMultiConv2DBlocks(iInputList, iDepthListList, iKernelListList, iActivation='relu', iPadding='same', iDropout=0.5, iNamePrefix='top'):
+    nInputs = len(iInputList)
+    nDepthLists = len(iDepthListList)
+    nKernelLists = len(iKernelListList)
+    wXList =[]
+    
+    for i in range(nInputs):
+        if nDepthLists < nInputs:
+            wDepthList = iDepthListList[0]
+        else:
+            wDepthList = iDepthListList[i]
+            
+        if nKernelLists < nInputs:
+            wKernelList = iKernelListList[0]
+        else:
+            wKernelList = iKernelListList[i]
+
+        wInput = iInputList[i]
+        wSuffix = str(i+1)
+        wNameList= ['_'.join([iNamePrefix, wSuffix+f"{j+1}"]) for j in range(len(wDepthList))]
+        
+        wX = addConv2DBlock(wInput, wDepthList, wKernelList, iActivation, iPadding, iDropout, iNameList=wNameList)
+        wXList.append(wX)
+    return wXList
+
+
+def upsampleInputs(iInputList, iUpSampleFlags, iPrefix='top'):
+    nEncoderOutputs = len(iInputList)
+    oProcessedInputList =[]
+    for i in range(nEncoderOutputs):
+        wUpSampleFlag = iUpSampleFlags[i]
+        wInput = iInputList[i]
+        if wUpSampleFlag:
+            wUpSampleName = '_'.join([iPrefix, f"{i}0"])
+            wUpSample = tf.keras.layers.UpSampling2D(size = (2,2), name=wUpSampleName)(wInput)
+            wInput = wUpSample
+        oProcessedInputList.append(wInput)
+    return oProcessedInputList
+
+def reduceInputDepths(iInputList, iReduceDimDepths, iActivation='relu', iPadding='same', iDropout=0.5, iPrefix ='top'):
+    nEncoderOutputs = len(iInputList)
+    oProcessedInputList =[]
+    for i in range(nEncoderOutputs):
+        wReduceDimDepth = iReduceDimDepths[i]
+        wInput = iInputList[i]
+        if wReduceDimDepth is not None:
+            wReduceDimName = '_'.join([iPrefix, 'red_dim', str(i)])
+            wXReduceDim = tf.keras.layers.Conv2D(wReduceDimDepth,(1,1), activation=iActivation, padding=iPadding, name=wReduceDimName)(wInput)
+            if iDropout:
+                wXReduceDim = tf.keras.layers.Dropout(iDropout)(wXReduceDim)
+            wInput = wXReduceDim
+        oProcessedInputList.append(wInput)
+    return oProcessedInputList
+
+def reduceInputDepth(iInput, iReduceDimDepth, iIdx, iActivation='relu', iPadding='same', iDropout=0.5, iPrefix ='top'):
+    oInput = iInput
+    if iReduceDimDepth is not None:
+        wReduceDimName = '_'.join([iPrefix, 'red_dim', str(iIdx)])
+        wXReduceDim = tf.keras.layers.Conv2D(iReduceDimDepth,(1,1), activation=iActivation, padding=iPadding, name=wReduceDimName)(iInput)
+        if iDropout:
+            wXReduceDim = tf.keras.layers.Dropout(iDropout, name='_'.join(['dropout']+wReduceDimName.split('_')[1:]))(wXReduceDim)
+        oInput = wXReduceDim
+
+    return oInput
+
+
+def createDecoderModel(iShapeList, iInputNameList, iReduceDimDepthList, iDepthListList, iKernelListList, iActivation='relu', iPadding='same', iDropout=0.5, iWithTop=False, iPrefix='top'):
+    wEncoderOutputList = []
+    wReduceDepthInputs = []
+    wXConvBlockList =[]
+    wXUpList=[]
+    wXCatList=[]
+    for i in range(len(iShapeList)):
+        wEncoderOutputList.append(tf.keras.Input(shape = iShapeList[i], name=iInputNameList[i]))
+        wReduceDepthInputs.append(reduceInputDepth(wEncoderOutputList[i], iReduceDimDepthList[i], i, iActivation, iPadding, iDropout, iPrefix))
+        wNameList = [f"top_{i+1}{j+1}" for j in range(len(iDepthListList[i]))]
+        if i==0:
+            wXConvBlockList.append(addConv2DBlock(wReduceDepthInputs[i], iDepthListList[i], iKernelListList[i], iActivation, iPadding, iDropout, iPrefix, wNameList))
+        else:
+            wName=f"top_{i+1}0"
+            wXUpList.append(tf.keras.layers.UpSampling2D(size=(2,2), name=wName)(wXConvBlockList[i-1]))
+            wXCatList.append(tf.keras.layers.concatenate([wXUpList[i-1],wReduceDepthInputs[i]], axis=3, name = '_'.join(['concatenate']+wName.split('_')[1:])))
+            wXConvBlockList.append(addConv2DBlock(wXCatList[i-1], iDepthListList[i], iKernelListList[i], iActivation, iPadding, iDropout, iPrefix, wNameList))
+       
+    if iWithTop:
+        for i in range(len(wXConvBlockList)):
+            wXConvBlockList[i] = tf.keras.layers.Conv2D(2, 1, padding=iPadding, name=f'top_out_{i+1}')(wXConvBlockList[i])
+            wXConvBlockList[i] = tf.keras.layers.Softmax(axis=-1, name=f'softmax_{i+1}')(wXConvBlockList[i])
+    
+    return tf.keras.models.Model(wEncoderOutputList, wXConvBlockList)
+
+
+def make_top_model_v4(iWithTop):
+    wShapeList = [(14,14,2048), (28,28,1024), (56,56,512)]
+    wReduceDimDepthList = [None, 256, 256]
+    wDepthListList = [[256,512,256,256,128], [128,256,256,512,256,256,128], [128,256,256,512,256,256,128]]
+    wKernelListList= [[1,3,1,3,1], [1,3,1,3,1,3,1], [1,3,1,3,1,3,1]]
+    wInputNameList= ['input_to_top', "input_from_base_layeri", "input_from_base_layeri2"]
+
+    return createDecoderModel(wShapeList, wInputNameList, wReduceDimDepthList, wDepthListList, wKernelListList, iActivation='relu', iPadding='same', iDropout=0.5, iWithTop=iWithTop)
+
+
+if __name__ =='__main__':
+    pass
+    
+
+    wDepthList = [128, 256, 256, 256, 128]
+    wKernelList = [1, 3, 1, 3, 1]
+    
+    wNoClassModel=removeClassificationLayers(wModel, [-2, 142, 80], ['top_15', 'top_27', 'top_37'])
+    wTLModel = addTransferLearnLayersV3(wNoClassModel, [-2, 142, 80], ['top_15', 'top_27', 'top_37'], wDepthList, wKernelList)
+
+# wShapeList = [(14,14,2048), (28,28,1024), (56,56,512)]
+# wReduceDimDepthList = [None, 256, 256]
+# wDepthListList = [[256,512,256,256,128], [128,256,256,512,256,256,128], [128,256,256,512,256,256,128]]
+# wKernelListList= [[1,3,1,3,1], [1,3,1,3,1,3,1], [1,3,1,3,1,3,1]]
+# wInputNameList= ['input_to_top', "input_from_base_layeri", "input_from_base_layeri2"]
+
+# createDecoderModel(wShapeList, wInputNameList, wReduceDimDepthList, wDepthListList, wKernelListList, iActivation='relu', iPadding='same', iDropout=0.5, iWithTop=True).summary()
+
+# iModel = wModel
+# iDecoderName = 'top_model'
+            
+# for wLayer in iModel.layers:
+#     if wLayer.name == iDecoderName:
+#         wDecoder= wLayer
 #         break
+# wOutputLayers = []
+# for wLayer in wDecoder.layers:
+#     if 'top_out' in wLayer.name:
+#         print(wLayer.name)
+#         wOutputLayers.append(wLayer.output)
+        
+# wInputList =[]
 
-index =142
-base_model.trainable = False
+# for wIdx, wName in zip([-2, 142, 80], ["input_to_top", 'input_from_base_layeri', 'input_from_base_layeri2']):
+#     wInputList.append(tf.keras.Input(shape = mModel.layers[wIdx].output.shape, name = wName))
+# wDecoder = tf.keras.models.Model(wInputList, iModel.layers[-1].output, 'top_model_2')    
 
-inputs = tf.keras.Input(shape=(448,448,3), name = "input_1")
-#layer_output_from_base_i = base_model.layers[index].output
-base_model2 = tf.keras.models.Model([base_model.inputs], [base_model.output, base_model.layers[index].output], name = 'base_model2')
-base_model2.trainable = False
-plot_model(base_model, os.path.join(os.getcwd(), 'resnet50.png'), show_shapes = True)
-plot_model(base_model2, os.path.join(os.getcwd(), 'base_model2.png'), show_shapes = True)
-top_model = make_top_model((14,14,2048), (28,28,1024))
+# mModel = tf.keras.models.Model([iModel.inputs], [iModel.layers[-2].output,iModel.layers[142].output, iModel.layers[80].output] , name = 'transfer_learn_model')
+# wLayersOut = [wLayer.output for wLayer in iModel.layers[-1].layers if 'top_out' in wLayer.name]
+# mDecoder = tf.keras.models.Model(iModel.layers[-1].input, wLayersOut, name = 'decoder')
 
-plot_model(top_model, os.path.join(os.getcwd(), 'top_model.png'), show_shapes = True)
+# wInput = tf.keras.Input(shape = mModel.inputs[0].shape[1:], name = 'input')
+# wY = mModel(wInput)
+# wY = mDecoder(wY)
 
-model = tf.keras.models.Model(base_model2.inputs, top_model(base_model2.output))
-model.summary()
-#plot_model(model, os.path.join(os.getcwd(), 'full_model.png'), show_shapes = True)
-"""
+
+# """
+# base_model = ResNet50(include_top=False, input_shape=(448,448,3),pooling='None',weights='imagenet')
+
+# # layerName = "conv4_block6_out"
+# # base_model.get_layer(name = layerName).output.shape
+# # index = None
+# # for idx, layer in enumerate(base_model.layers):
+# #     if layer.name == layerName:
+# #         index = idx
+# #         break
+
+# index =142
+# base_model.trainable = False
+
+# inputs = tf.keras.Input(shape=(448,448,3), name = "input_1")
+# #layer_output_from_base_i = base_model.layers[index].output
+# base_model2 = tf.keras.models.Model([base_model.inputs], [base_model.output, base_model.layers[index].output], name = 'base_model2')
+# base_model2.trainable = False
+# plot_model(base_model, os.path.join(os.getcwd(), 'resnet50.png'), show_shapes = True)
+# plot_model(base_model2, os.path.join(os.getcwd(), 'base_model2.png'), show_shapes = True)
+# top_model = make_top_model((14,14,2048), (28,28,1024))
+
+# plot_model(top_model, os.path.join(os.getcwd(), 'top_model.png'), show_shapes = True)
+
+# model = tf.keras.models.Model(base_model2.inputs, top_model(base_model2.output))
+# model.summary()
+# #plot_model(model, os.path.join(os.getcwd(), 'full_model.png'), show_shapes = True)
+# """

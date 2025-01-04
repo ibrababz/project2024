@@ -479,76 +479,87 @@ class CombinedWeed():
         self.combinedWeed = flatIm
         self.combinedMask = flatMask
 
-    def setBlend(self):
+    def setBlend(self, iBlendFlag=True):
         weed = self.getStackedWeeds()
         mask = self.getStackedPosedMasks()
-        grass = self.getGrass()
-        mask_list = [mask.copy()/255.0]
-        for i in range(5):
-            rows,cols = mask_list[i].shape
-            den = 2
-            mask_list.append(cv.resize(mask.copy()/255.0, (cols//den, rows//den), interpolation = cv.INTER_AREA))
-        mask_list.reverse()
-
+        grass = self.getGrass()        
+        
         A = weed.copy()/255.0
         B = grass.copy()/255.0
         C = mask.copy()/255.0
-        
-        # generate Gaussian pyramid for A
-        G = A.copy()
-        gpA = [G]
-        for i in range(6):
-            G = cv.pyrDown(G)
-            gpA.append(G)
-        # generate Gaussian pyramid for B
-        G = B.copy()
-        gpB = [G]
-        for i in range(6):
-            G = cv.pyrDown(G)
-            gpB.append(G)
-        # generate Gaussian pyramid for C
-        G = C.copy()
-        gpC = [G]
-        for i in range(5):
-            G = cv.pyrDown(G)
-            gpC.append(G)
-        gpC.reverse()    
-        # generate Laplacian Pyramid for A
-        lpA = [gpA[5]]
-        for i in range(5,0,-1):
-            GE = cv.pyrUp(gpA[i])
-            L = cv.subtract(gpA[i-1],GE)
-            lpA.append(L)
-        # generate Laplacian Pyramid for B
-        lpB = [gpB[5]]
-        for i in range(5,0,-1):
-            GE = cv.pyrUp(gpB[i])
-            L = cv.subtract(gpB[i-1],GE)
-            lpB.append(L)
-        # Now add left and right halves of images in each level
-        LS = []
-        for la,lb,gc in zip(lpA,lpB,mask_list):
-            WB = lb.shape[1]
-            gc = gc[...,None]
-            #ls = la*(gc) + (lb*(1 - gc))
-            ls = la*(gc)
-            lsPrime= 0.
-            gcPrime = 0.
+
+        if iBlendFlag:
+            mask_list = [mask.copy()/255.0]
+            for i in range(5):
+                rows,cols = mask_list[i].shape
+                den = 2
+                mask_list.append(cv.resize(mask.copy()/255.0, (cols//den, rows//den), interpolation = cv.INTER_AREA))
+            mask_list.reverse()
+
+            # generate Gaussian pyramid for A
+            G = A.copy()
+            gpA = [G]
+            for i in range(6):
+                G = cv.pyrDown(G)
+                gpA.append(G)
+            # generate Gaussian pyramid for B
+            G = B.copy()
+            gpB = [G]
+            for i in range(6):
+                G = cv.pyrDown(G)
+                gpB.append(G)
+            # generate Gaussian pyramid for C
+            G = C.copy()
+            gpC = [G]
+            for i in range(5):
+                G = cv.pyrDown(G)
+                gpC.append(G)
+            gpC.reverse()    
+            # generate Laplacian Pyramid for A
+            lpA = [gpA[5]]
+            for i in range(5,0,-1):
+                GE = cv.pyrUp(gpA[i])
+                L = cv.subtract(gpA[i-1],GE)
+                lpA.append(L)
+            # generate Laplacian Pyramid for B
+            lpB = [gpB[5]]
+            for i in range(5,0,-1):
+                GE = cv.pyrUp(gpB[i])
+                L = cv.subtract(gpB[i-1],GE)
+                lpB.append(L)
+            # Now add left and right halves of images in each level
+            LS = []
+            for la,lb,gc in zip(lpA,lpB,mask_list):
+                WB = lb.shape[1]
+                gc = gc[...,None]
+                #ls = la*(gc) + (lb*(1 - gc))
+                ls = la*(gc)
+                lsPrime= 0.
+                gcPrime = 0.
+                for i in range(self.mNoCombinedWeeds):
+                    lsPrime = lsPrime + ls[:,i*WB:(i+1)*WB]
+                    gcPrime  = gcPrime  + gc[:,i*WB:(i+1)*WB]
+                lsPrime = lsPrime + (lb*(1 - gcPrime))
+                LS.append(lsPrime)
+            # now reconstruct
+            ls_ = LS[0]
+            for i in range(1,6):
+                ls_ = cv.pyrUp(ls_)
+                ls_ = cv.add(ls_, LS[i])
+            # image with direct connecting each half
+            
+            gaussian_3 = cv.GaussianBlur(ls_, (0, 0), 2.0)
+            self.finalImage = np.clip(cv.addWeighted(ls_, 1.5, gaussian_3, -0.5, 0), 0., 1., dtype = np.float32)
+        else:
+            H,W,_ = B.shape
+            wWeed = 0.
+            wMask = 0.
             for i in range(self.mNoCombinedWeeds):
-                lsPrime = lsPrime + ls[:,i*WB:(i+1)*WB]
-                gcPrime  = gcPrime  + gc[:,i*WB:(i+1)*WB]
-            lsPrime = lsPrime + (lb*(1 - gcPrime))
-            LS.append(lsPrime)
-        # now reconstruct
-        ls_ = LS[0]
-        for i in range(1,6):
-            ls_ = cv.pyrUp(ls_)
-            ls_ = cv.add(ls_, LS[i])
-        # image with direct connecting each half
-        
-        gaussian_3 = cv.GaussianBlur(ls_, (0, 0), 2.0)
-        self.finalImage = np.clip(cv.addWeighted(ls_, 1.5, gaussian_3, -0.5, 0), 0., 1., dtype = np.float32)
-    
+                wWeed += A[:, i*W:(i+1)*W]*C[:, i*W:(i+1)*W, None]
+                wMask += C[:, i*W:(i+1)*W, None]
+
+            self.finalImage = np.clip(wWeed+ B*(1-wMask), 0., 1., dtype = np.float32)
+            
     def getBlend(self, iDim = None, inter = cv.INTER_AREA):
         if iDim is None:
             im = self.finalImage

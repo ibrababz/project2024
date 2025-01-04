@@ -14,9 +14,29 @@ from copy import deepcopy
 def makeNewDir(iSaveDir, iIdx=0, iSuffix='_test_'):
     wSaveDir = iSaveDir + iSuffix + adjust_number(iIdx, 2)
     if not os.path.exists(wSaveDir):
+        print("\nMaking new directory:\n%s\n"%wSaveDir)
         return wSaveDir
     else:
-        return makeNewDir(iSaveDir, iIdx+1)
+        return makeNewDir(iSaveDir, iIdx+1, iSuffix)
+    
+def makeNewDirV2(iParDir, iFolderName, iKey, iIdx=0, iPrefix='test'):
+    wPrefix = iPrefix +'_'+ adjust_number(iIdx, 2)
+    wNew=True
+    for wFile in os.listdir(iParDir)[::-1]: #reverse it because it's usually order 
+                                            #so might as well search from bottom up
+        try:
+            if iKey == wFile.split('_')[2] and wPrefix == '_'.join(wFile.split('_')[0:2]):
+                wNew=False
+                break
+        except IndexError:
+            pass
+        
+    if wNew:
+        return os.path.join(iParDir, "_".join([wPrefix, iKey, iFolderName]))
+    else:
+        return makeNewDirV2(iParDir, iFolderName, iKey, iIdx+1, iPrefix)
+    
+ 
             
 
 def generate_data_list(data_path, file_points_path, scale_x = 1., scale_y = 1.):
@@ -62,6 +82,7 @@ def getMapListsFromBatch(iBatch):
     for wDataObj in iBatch:
         mapBatch.append(wDataObj.getMapList())  
     return np.array(mapBatch, dtype = object).T.tolist()
+    # return mapBatch
 
 def getNameListFromBatch(iBatch):
     oNameBatch = []
@@ -163,10 +184,11 @@ def loadDataFilesAsObjects(iSrcPath, iStopFlag = 0):
             break
         wDataPath = os.path.join(iSrcPath,wFolder)
         wNameList = []
+        wImSrcPath = None
         for wDir in os.listdir(wDataPath):
-            if wDir[-4:] == '.npy':
+            if wDir.split('.')[-1] == 'npy':
                 wImage = np.load(os.path.join(wDataPath,wDir))
-            elif wDir[-4:] == '.txt':
+            elif wDir.split('.')[-1] == 'txt':
                 wFilePath = os.path.join(wDataPath, wDir)
                 wFile = open(wFilePath, "r")
                 for wLine in wFile:
@@ -219,7 +241,7 @@ class LoadedDataObject:
         return self.mLoadDir
 
 class RandomWeedBatchGenerator:
-    def __init__(self, iBatchSize, iWeedData, iDimGridList, iGrassList, iWeedSampleSize, iSamplerSeed, iColorTrans = True):
+    def __init__(self, iBatchSize, iWeedData, iDimGridList, iGrassList, iWeedSampleSize, iSamplerSeed, iColorTrans=True, iBlend=True):
         self.mBatchSize = iBatchSize
         self.mWeedData = iWeedData
         self.mWeedData.setDimGridList(iDimGridList)        
@@ -228,6 +250,7 @@ class RandomWeedBatchGenerator:
         self.mSampleSize = iWeedSampleSize
         self.mWeedData.setAllRandomSamplers(self.mSampleSize, iSamplerSeed)
         self.mColorTrans = iColorTrans
+        self.mBlend=iBlend
         self.mCounter = 0
     
     def reseedAllRandomSamplers(self, iSamplerSeed):
@@ -278,7 +301,7 @@ class RandomWeedBatchGenerator:
                 wSuccessFlag = wCombinedWeeds.isSuccess()
             wCombinedWeeds.setPosedMasks()
             wCombinedWeeds.flattenWeeds()
-            wCombinedWeeds.setBlend()
+            wCombinedWeeds.setBlend(self.mBlend)
             wCombinedWeeds.setStackedMaps()
             
             self.mNameBatch.append(names) #for debugging
@@ -719,8 +742,9 @@ def draw_batch(X_batch, y_batch_koi, y_batch_bboi, batch_names, color1 = (255,0,
         X_draw.append(img)
     return X_draw
 
-def show_batch(X_batch, batch_names = None, size = 40.):
+def show_batch(X_batch, batch_names = None, size = 40., iEndIdx=4):
     #print('ShowingBatch')    
+    X_batch= X_batch[:iEndIdx]
     _, axs = plt.subplots(1, len(X_batch), figsize=(40, 40))
     if len(X_batch)>1:
         axs = axs.flatten()
@@ -740,6 +764,31 @@ def show_batch(X_batch, batch_names = None, size = 40.):
             ax.imshow(img)
 
     plt.show()
+    
+    
+def get_batch_plots(X_batch, batch_names = None, size = 40., iEndIdx=4):
+    #print('ShowingBatch')    
+    X_batch = X_batch[:iEndIdx]
+    _, axs = plt.subplots(1, len(X_batch))#, figsize=(40, 40))
+    if len(X_batch)>1:
+        axs = axs.flatten()
+    else:
+        axs = [axs]
+    if batch_names is not None:
+        for img, name, ax in zip(X_batch, batch_names, axs):
+            h,w = np.shape(img)[0], np.shape(img)[1]
+            img = img[...,::-1]
+            ax.text(w/3, h/6, name[-13:-4], size = size, weight = 'bold', color = 'r')
+            ax.imshow(img)
+    else:
+        for img, ax in zip(X_batch, axs):
+            h,w = np.shape(img)[0], np.shape(img)[1]
+            img = img[...,::-1]
+            ax.text(w/3, h/6, '', size = size, weight = 'bold', color = 'r')
+            ax.imshow(img)
+
+    plt.tight_layout()
+    return plt
     
 class generate_batch():
     

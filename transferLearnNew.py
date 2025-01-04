@@ -12,7 +12,7 @@ from dataLoad import loadDataFilesAsObjects, generate_batch, makeNewDirV2
 from models import makeYoloType
 from tensorflow.keras.utils import plot_model
 from models import save_model_summary
-from TrainerClass import ModelTrainer
+from TrainerClass import ModelTrainer, ModelTransLearn
 from augment_utils import chooseAugments
 import sys
 import argparse
@@ -33,8 +33,8 @@ gParentDir = os.path.abspath(os.path.join(ROOT_DIR, os.pardir))
 
 def getArguments():
     parser = argparse.ArgumentParser(
-                        prog='Training',
-                        description='Training light decoder with pre-trained backbone',
+                        prog='Synthetic Dandelion Image Generator',
+                        description='Generate synthetic training and validation data sets',
                         epilog='Text at the bottom of help')
     
     parser.add_argument('-b', '--mBatchSize', nargs = '+', default= [0, 32, 1000, 16], type=int, 
@@ -55,6 +55,8 @@ def getArguments():
     parser.add_argument('-v', '--mValidDir', default=os.path.join(*[gParentDir, "data4k", "valid_real_448_res2"]),
                         help='Full path validation data folder')
     
+    parser.add_argument('-g', '--mTransferLearnLoadPath', help='Full path to pre-trained model for transfer learning checkpoint')
+    
     parser.add_argument('-n', '--mNorm', default=255., type=float, 
                         help='Normalize input pixels by')
     
@@ -70,8 +72,8 @@ def getArguments():
     parser.add_argument('-a', '--mPlotAll', default=1, type=int, 
                         help='Plot all resolutions 1 or only active loss level 0')
     
-    parser.add_argument('-f', '--mUnfreezeRate', nargs = '+', type=float, 
-                        help='Start epoch and rate at which to unfreeze backbone network when fine-tuning')
+    parser.add_argument('-f', '--mUnfreezeRate', default=500, type=float, 
+                        help='Rate by which to unfreeze backbone network when fine-tuning')
 
     parser.add_argument('-i', '--mLRSched', nargs = '+', default=[0, 1e-4, 301, 1e-5, 500, 1e-6, 549, 1e-7], type=float, 
                         help='LR schedule as a list [epoch_1, LR_1, epoch_2, LR_2, etc...]')
@@ -94,7 +96,10 @@ def getArguments():
     parser.add_argument('-q', '--mLossLvlSched', nargs = '+', default=[0, 0, 100, 1, 200, 2, 300, -3], type=int, 
                         help='Loss level scheduling [epoch_1, losslvlflag_2, epoch_2, losslvlflag_2, etc...]')
     
+    parser.add_argument('-k', '--mDepthKernelList', nargs = '+', default=[128, 1, 256, 3, 256, 1, 256, 3, 128, 1], type=int, 
+                        help='Loss level scheduling [epoch_1, losslvlflag_2, epoch_2, losslvlflag_2, etc...]')
     
+       
     return parser
 
 def decodeParserSched(iList, iEpKey=int, iValKey= int):
@@ -123,12 +128,14 @@ if __name__ =='__main__':
     wPlotAll = bool(wArgs.mPlotAll)
     wEpList, wLRList = decodeParserSched(wArgs.mLRSched, iValKey=float) 
     wCheckPointFreq = wArgs.mCkptFreq
-    wUnfreezeStartEpoch, wUnfreezeRate = decodeParserSched(wArgs.mUnfreezeRate, int, float)
+    wUnfreezeRate = wArgs.mUnfreezeRate
     wLastN = wArgs.mSaveLastN
     wLogFreq = wArgs.mLogFreq
     wWithPath = bool(wArgs.mWithPath)
     wAugments = wArgs.mAugments
     wLossLvlEpList, wLossLvlFlagList = decodeParserSched(wArgs.mLossLvlSched)
+    wTransferLearnLoadPath = wArgs.mTransferLearnLoadPath
+    wDepthList, wKernelList = decodeParserSched(wArgs.mDepthKernelList)
     
 #%%
     print('\nLoading Training Data')
@@ -162,23 +169,30 @@ if __name__ =='__main__':
     
 #%% Fresh Start
     
-    wTrainer = ModelTrainer(wModel, wOptimizer)
-    
-    wTrainer.setPlotFreq(iPlotFreq=wPlotFreq, iPlotAll=wPlotAll)
+    wTrainer = ModelTransLearn(wModel, wOptimizer)
+    wEncoderIdxList, wDecoderNameList=[-2, 142, 80], ['top_15', 'top_27', 'top_37']
     if wArgs.mCkpt is None:
-        wTrainer.getModel().trainable = False 
+        wTrainer.setTransferLearnLoadPath(wTransferLearnLoadPath)
+        wTrainer.loadTransferLearn()
+        wTrainer.removeClassificationLayers(wEncoderIdxList, wDecoderNameList)
+        wTrainer.addTransferLearnLayers(wEncoderIdxList, wDecoderNameList, wDepthList, wKernelList)
+        wTrainer.freezeBackBone()
     else:
+        wTrainer.removeClassificationLayers(wEncoderIdxList, wDecoderNameList)
+        wTrainer.addTransferLearnLayers(wEncoderIdxList, wDecoderNameList, wDepthList, wKernelList)
         wLoadDir = os.path.abspath(os.path.join(wArgs.mCkpt, os.pardir))
         wTrainer.setLoadDir(wLoadDir)
         wCkpt = PurePath(wArgs.mCkpt).parts[-1].split('.')[0]
+        wTrainer.freezeBackBone()
         wTrainer.loadFromCkpt(wCkpt)
         wStart = int(wCkpt.split('_')[0])+1
         print("Automatically starting from Epoch: %s"%wStart)
         wTrainer.setLossLvlScheduleFromDict({})
         wTrainer.setLayerFreezeScheduleFromDict({})
         wTrainer.setLRSchedFromDict({})
-        wTrainer.setBatchSizeScheduleFromDict({})
-        
+    
+    wTrainer.setPlotFreq(iPlotFreq=wPlotFreq, iPlotAll=wPlotAll)        
+    
     for wEp, wLR in zip(wEpList, wLRList):
         wTrainer.setLRSched(wEp, wLR)
     
@@ -186,9 +200,8 @@ if __name__ =='__main__':
     wTrainer.setLossLvlScheduleFromFlagList(wLossLvlEpList, wLossLvlFlagList)    
     wTrainer.setLossDict(iLossDict = {'Pos': 5., 'Neg': 5.*5., 'Dice': 1.})
     # wTrainer.setLossDict(iLossDict = {'Pos': 5., 'Neg': 5.*5., 'Dice': 1., 'Cart':5.*5.})
-
-    wBaseModelLayers = [wLayer.name for wLayer in wModel.layers[::-1][1:] if not('batch' in str(type(wLayer)).lower()  and 'normalization' in str(type(wLayer)).lower())]
-    wTrainer.setGradualUnfreeze(iStart=wUnfreezeStartEpoch[0], iRate=wUnfreezeRate[0], iLayerNames=wBaseModelLayers)    
+    wBaseModelLayers = [wLayer.name for wLayer in wTrainer.getModel().layers[::-1][1:] if not('batch' in str(type(wLayer)).lower()  and 'normalization' in str(type(wLayer)).lower())]
+    wTrainer.setGradualUnfreeze(iStart=wEpList[1], iRate=wUnfreezeRate, iLayerNames=wBaseModelLayers)    
 
     wTrainer.setSaveDir(iSaveDir=wSaveDir)
     wTrainer.setData(iTrainData=wDataObjectList, iValidData=wValidDataObjectList)#, iBatchSize=wBatchSize)
