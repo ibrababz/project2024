@@ -60,8 +60,9 @@ if __name__ =='__main__':
     wEvaluator.setSavePlotType('truth_acts')
     wEvaluator.setSavePlots(False)
 #%%    
-    for iResIdx in range(1):
-        wStart, wEnd, wStep = 0.5, 1, 0.0125
+    for iResIdx in range(3):
+        print("Res:%s"%(iResIdx+1))
+        wStart, wEnd, wStep = 0.5, 1, 0.025
         wNoSteps = int((wEnd-wStart)//wStep)+1
         wThreshList = [round(wStart+i*wStep,3) for i in range(wNoSteps)]
         # wThreshList = [.85]

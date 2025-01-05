@@ -190,6 +190,7 @@ if __name__ =='__main__':
         wTrainer.setLossLvlScheduleFromDict({})
         wTrainer.setLayerFreezeScheduleFromDict({})
         wTrainer.setLRSchedFromDict({})
+        wTrainer.setBatchSizeScheduleFromDict({})
     
     wTrainer.setPlotFreq(iPlotFreq=wPlotFreq, iPlotAll=wPlotAll)        
     

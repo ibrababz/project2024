@@ -160,7 +160,12 @@ class ModelTrainer:
         return wDict
     
     def setLayerFreezeScheduleByName(self, iEpoch, iLayerStateDict):
-        self.mLayerStateDict.update({str(iEpoch): iLayerStateDict})
+        wKey = str(iEpoch)
+        wDict = self.getLayerStateDict()
+        if wKey in wDict.keys():
+            wDict[wKey].update(iLayerStateDict)
+        else:
+            self.mLayerStateDict.update({str(iEpoch): iLayerStateDict})
         
     def setLayerFreezeScheduleFromDict(self, iDict):
         self.mLayerStateDict = iDict

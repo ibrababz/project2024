@@ -12,7 +12,7 @@ from dataLoad import loadDataFilesAsObjects, generate_batch, makeNewDirV2
 from models import makeYoloType
 from tensorflow.keras.utils import plot_model
 from models import save_model_summary
-from TrainerClass import ModelTrainer
+from TrainerClass import ModelTrainer, ModelTransLearn
 from augment_utils import chooseAugments
 import sys
 import argparse
@@ -33,8 +33,8 @@ gParentDir = os.path.abspath(os.path.join(ROOT_DIR, os.pardir))
 
 def getArguments():
     parser = argparse.ArgumentParser(
-                        prog='Training',
-                        description='Training light decoder with pre-trained backbone',
+                        prog='Synthetic Dandelion Image Generator',
+                        description='Generate synthetic training and validation data sets',
                         epilog='Text at the bottom of help')
     
     parser.add_argument('-b', '--mBatchSize', nargs = '+', default= [0, 32, 1000, 16], type=int, 
@@ -54,6 +54,8 @@ def getArguments():
      
     parser.add_argument('-v', '--mValidDir', default=os.path.join(*[gParentDir, "data4k", "valid_real_448_res2"]),
                         help='Full path validation data folder')
+    
+    parser.add_argument('-g', '--mTransferLearnLoadPath', help='Full path to pre-trained model for transfer learning checkpoint')
     
     parser.add_argument('-n', '--mNorm', default=255., type=float, 
                         help='Normalize input pixels by')
@@ -94,7 +96,7 @@ def getArguments():
     parser.add_argument('-q', '--mLossLvlSched', nargs = '+', default=[0, 0, 100, 1, 200, 2, 300, -3], type=int, 
                         help='Loss level scheduling [epoch_1, losslvlflag_2, epoch_2, losslvlflag_2, etc...]')
     
-    
+
     return parser
 
 def decodeParserSched(iList, iEpKey=int, iValKey= int):
@@ -129,6 +131,8 @@ if __name__ =='__main__':
     wWithPath = bool(wArgs.mWithPath)
     wAugments = wArgs.mAugments
     wLossLvlEpList, wLossLvlFlagList = decodeParserSched(wArgs.mLossLvlSched)
+    wTransferLearnLoadPath = wArgs.mTransferLearnLoadPath
+
     
 #%%
     print('\nLoading Training Data')
@@ -162,15 +166,21 @@ if __name__ =='__main__':
     
 #%% Fresh Start
     
-    wTrainer = ModelTrainer(wModel, wOptimizer)
-    
-    wTrainer.setPlotFreq(iPlotFreq=wPlotFreq, iPlotAll=wPlotAll)
+    wTrainer = ModelTransLearn(wModel, wOptimizer)
+    # wEncoderIdxList, wDecoderNameList=[-2, 142, 80], ['top_15', 'top_27', 'top_37']
     if wArgs.mCkpt is None:
-        wTrainer.getModel().trainable = False 
+        wTrainer.setTransferLearnLoadPath(wTransferLearnLoadPath)
+        wTrainer.loadTransferLearn()
+        # wTrainer.removeClassificationLayers(wEncoderIdxList, wDecoderNameList)
+        # wTrainer.addTransferLearnLayers(wEncoderIdxList, wDecoderNameList, wDepthList, wKernelList)
+        wTrainer.freezeBackBone()
     else:
+        # wTrainer.removeClassificationLayers(wEncoderIdxList, wDecoderNameList)
+        # wTrainer.addTransferLearnLayers(wEncoderIdxList, wDecoderNameList, wDepthList, wKernelList)
         wLoadDir = os.path.abspath(os.path.join(wArgs.mCkpt, os.pardir))
         wTrainer.setLoadDir(wLoadDir)
         wCkpt = PurePath(wArgs.mCkpt).parts[-1].split('.')[0]
+        wTrainer.freezeBackBone()
         wTrainer.loadFromCkpt(wCkpt)
         wStart = int(wCkpt.split('_')[0])+1
         print("Automatically starting from Epoch: %s"%wStart)
@@ -178,7 +188,9 @@ if __name__ =='__main__':
         wTrainer.setLayerFreezeScheduleFromDict({})
         wTrainer.setLRSchedFromDict({})
         wTrainer.setBatchSizeScheduleFromDict({})
-        
+    
+    wTrainer.setPlotFreq(iPlotFreq=wPlotFreq, iPlotAll=wPlotAll)        
+    
     for wEp, wLR in zip(wEpList, wLRList):
         wTrainer.setLRSched(wEp, wLR)
     
