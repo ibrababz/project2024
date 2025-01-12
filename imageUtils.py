@@ -6,6 +6,32 @@ from augment_utils import inverse_transform_matrix, getAngleBounds, warpImage, g
 from colortrans import transfer_lhm
 #from helper import show_wait
 
+import matplotlib.pyplot as plt
+from matplotlib.pyplot import text
+
+
+#%%
+def getLossFig(iEpoch, iTLoss, iVLoss, iVLines ={}):
+    wEpochs = np.arange(0,iEpoch+1)
+    wFig = plt.figure()
+    wAx = wFig.subplots()
+    wAx.plot(wEpochs, iTLoss, label='train')
+    wAx.plot(wEpochs, iVLoss, label='valid')
+    
+    wVLineXs = [int(wKey) for wKey in iVLines if int(wKey) <= iEpoch]
+    wVLineTexts = [f"LR\n{iVLines[wKey]:.0e}" for wKey in iVLines if int(wKey) <= iEpoch]    
+    wMaxY = max([max(iTLoss), max(iVLoss)])
+    
+    wAx.vlines(wVLineXs, ymin=0, ymax= 1.5*wMaxY, colors='red', linestyle='dashed', linewidth=0.75)
+    yLim = 1.2*wMaxY
+    wAx.set_ylim((0,yLim))
+
+    for wX, wText in zip(wVLineXs, wVLineTexts):
+        text(wX+1, 0.875*yLim, wText, color='red')
+    wAx.legend(loc='lower left')
+    return plt
+
+
 def putTitleOnImage(ioIm, iTitle, iHeaderSize= 3.5, iFont=cv.FONT_HERSHEY_SIMPLEX, iFontScale=3.5, iTextColor=(0, 0, 0), iThick=10):
     H,W = ioIm.shape[:2]
     

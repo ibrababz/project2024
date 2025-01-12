@@ -14,7 +14,7 @@ from dataLoad import file_writing
 from helper import adjust_number
 # from loss_functions import ComputeLosses
 from augment_utils import copyTemp, augmentXData, normListBy
-from loss_functions import tensor_pos_neg_loss, dist_loss_from_list, tensor_dice_loss, tensor_map_loss, act_list_3D
+from loss_functions import dist_loss_from_list, tensor_map_loss, act_list_3D
 from loss_functions import getVectors, tensorPosNegLoss, tensorDiceLoss
 from tensorflow.keras import backend as B  
 from tensorflow.train import Checkpoint
@@ -22,6 +22,7 @@ from metrics import act_from_pred_list, threshold_list, refine_thresh_list
 from metrics import get_cntrs_list, draw_cntrs_list, draw_cntrs_exp_list, find_cent_list, draw_cent_on_im_list
 from metrics import TF_Metrics_from_batch, Metrics_from_TF_batch
 from shutil import rmtree
+from imageUtils import getLossFig
 
 from models import removeClassificationLayers, addTransferLearnLayersV3
 
@@ -235,7 +236,7 @@ class ModelTrainer:
                 if wLayer != wDecoderName:
                     wModel.get_layer(wLayer).trainable = wDict[wLayer]
             print("Updated States:")
-            self.printCurrentActualStates()
+            self.printCurrentStates()
             
             
     def updateLayerStatesFromLoaded(self):
@@ -584,6 +585,18 @@ class ModelTrainer:
             self.checkValLoss(wValidLossPerEpoch)
 
             self.addRemoveSavedModels(wLastN, wValidLossPerEpoch)
+            
+            if self.plotCondition() or (self.getLoadFlag() and self.getEpoch()-self.getLoadEpoch() == 1):
+                wPlt = self.plotLosses()
+                if not self.getFromShell():
+                    wPlt.show()
+                else:
+                    try:
+                        wPlt.savefig(os.path.join(self.getSaveDir(),'loss_tracker.png'))
+                    except PermissionError:
+                        print("Permission Error, failed to save loss tracker plot, will try on next checkpoint")
+                    
+                wPlt.close()
                         
             B.set_value(self.mOptimizer.iterations, i)
             print('ep:', self.getEpoch(), 'tr L:', np.round(wTrainLossPerEpoch,3), 'val L:', np.round(wValidLossPerEpoch,3), 'min_V:', np.round(self.getMinValLoss(), 3))
@@ -845,7 +858,15 @@ class ModelTrainer:
         
     def getFromShell(self):
         return self.mFromShell
-     
+    
+    def plotLosses(self):
+        wEpoch=self.getEpoch()
+        wTrainLossTracker = self.getLossTracker(True)
+        wValidLossTracker = self.getLossTracker(False)
+        wLRSched= self.getLRSched()
+        return getLossFig(wEpoch, wTrainLossTracker, wValidLossTracker, wLRSched)
+        
+    
     def showPlots(self, iXData, iPredList, iType):
         wLossLvl = self.getLossLvl()
         if not self.getFromShell():
@@ -1167,12 +1188,12 @@ class ModelTrainer:
         self.loadInit(iLoadFile)
         self.updateLayerStatesFromLoaded()
         self.updateLossLvlScheduleFromLoaded()
-        self.printCurrentActualStates()
+        self.printCurrentStates()
         
     def getBackBone(self):
         return self.getModel().layers[:-1]
     
-    def printCurrentActualStates(self):
+    def printCurrentStates(self):
 
         wHeader = f"{'Name':^10} {'Trainable':^12}"
         print(wHeader)

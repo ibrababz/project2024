@@ -17,6 +17,8 @@ from augment_utils import chooseAugments
 import sys
 import argparse
 from pathlib import PurePath
+from parsingFunctions import decodeParserSched, logArgs
+
 if sys.stdin and sys.stdin.isatty():
     gFromShell=True
     ROOT_DIR = os.path.abspath(os.path.join(__file__, os.pardir))
@@ -55,7 +57,7 @@ def getArguments():
     parser.add_argument('-v', '--mValidDir', default=os.path.join(*[gParentDir, "data4k", "valid_real_448_res2"]),
                         help='Full path validation data folder')
     
-    parser.add_argument('-g', '--mTransferLearnLoadPath', help='Full path to pre-trained model for transfer learning checkpoint')
+    parser.add_argument('-g', '--mFineTuneLoadPath', help='Full path to pre-trained model for fine tuning checkpoint')
     
     parser.add_argument('-n', '--mNorm', default=255., type=float, 
                         help='Normalize input pixels by')
@@ -99,12 +101,6 @@ def getArguments():
 
     return parser
 
-def decodeParserSched(iList, iEpKey=int, iValKey= int):
-    oEpList, oValList = [], []
-    for i in range(len(iList)//2):
-        oEpList.append(iEpKey(iList[2*i]))
-        oValList.append(iValKey(iList[2*i+1]))
-    return oEpList, oValList
 #%%
 if __name__ =='__main__':
     
@@ -131,8 +127,8 @@ if __name__ =='__main__':
     wWithPath = bool(wArgs.mWithPath)
     wAugments = wArgs.mAugments
     wLossLvlEpList, wLossLvlFlagList = decodeParserSched(wArgs.mLossLvlSched)
-    wTransferLearnLoadPath = wArgs.mTransferLearnLoadPath
-
+    wFineTuneLoadPath = wArgs.mFineTuneLoadPath
+    wCkptPath = wArgs.mCkpt
     
 #%%
     print('\nLoading Training Data')
@@ -152,10 +148,14 @@ if __name__ =='__main__':
     wOptimizer = tf.keras.optimizers.Adam(learning_rate= wLRList[0], clipnorm=1., clipvalue=0.5) 
     
 #%%
-    wSaveFolder = "ep_{}-{}_lr_{:.0e}".format(wEpochs[0], wEpochs[1], wLRList[0])
+    wScriptName=os.path.splitext(os.path.basename(__file__))[0]
+    wSaveFolder = "{}_ep_{}-{}_lr_{:.0e}".format(wScriptName, wEpochs[0], wEpochs[1], wLRList[0])
     wSaveDir = makeNewDirV2(ROOT_DIR, wSaveFolder, wModelFlag, 0)
     os.makedirs(wSaveDir, exist_ok=True)
-    print(wSaveDir)
+    print('\nSave dir: %s'%wSaveDir)
+    wArgLogName=wScriptName +'_args.csv'
+    logArgs(wArgs, wSaveDir, wArgLogName)
+    print('\nSaved argument Log to: %s'%wArgLogName)
 
 #%%
     plot_model(wModel.layers[-1], os.path.join(wSaveDir, 'top_model.png'), show_shapes = True)
@@ -168,8 +168,8 @@ if __name__ =='__main__':
     
     wTrainer = ModelTransLearn(wModel, wOptimizer)
     # wEncoderIdxList, wDecoderNameList=[-2, 142, 80], ['top_15', 'top_27', 'top_37']
-    if wArgs.mCkpt is None:
-        wTrainer.setTransferLearnLoadPath(wTransferLearnLoadPath)
+    if wCkptPath is None:
+        wTrainer.setTransferLearnLoadPath(wFineTuneLoadPath)
         wTrainer.loadTransferLearn()
         # wTrainer.removeClassificationLayers(wEncoderIdxList, wDecoderNameList)
         # wTrainer.addTransferLearnLayers(wEncoderIdxList, wDecoderNameList, wDepthList, wKernelList)
@@ -177,9 +177,9 @@ if __name__ =='__main__':
     else:
         # wTrainer.removeClassificationLayers(wEncoderIdxList, wDecoderNameList)
         # wTrainer.addTransferLearnLayers(wEncoderIdxList, wDecoderNameList, wDepthList, wKernelList)
-        wLoadDir = os.path.abspath(os.path.join(wArgs.mCkpt, os.pardir))
+        wLoadDir = os.path.abspath(os.path.join(wCkptPath, os.pardir))
         wTrainer.setLoadDir(wLoadDir)
-        wCkpt = PurePath(wArgs.mCkpt).parts[-1].split('.')[0]
+        wCkpt = PurePath(wCkptPath).parts[-1].split('.')[0]
         wTrainer.freezeBackBone()
         wTrainer.loadFromCkpt(wCkpt)
         wStart = int(wCkpt.split('_')[0])+1
@@ -188,7 +188,7 @@ if __name__ =='__main__':
         wTrainer.setLayerFreezeScheduleFromDict({})
         wTrainer.setLRSchedFromDict({})
         wTrainer.setBatchSizeScheduleFromDict({})
-    
+        
     wTrainer.setPlotFreq(iPlotFreq=wPlotFreq, iPlotAll=wPlotAll)        
     
     for wEp, wLR in zip(wEpList, wLRList):

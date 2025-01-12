@@ -7,6 +7,7 @@ Created on Tue Aug 20 21:09:29 2024
 import tensorflow as tf
 import os
 import numpy as np
+import sys
 
 from dataLoad import loadDataFilesAsObjects, generate_batch, makeNewDirV2
 from models import makeYoloType
@@ -14,9 +15,10 @@ from tensorflow.keras.utils import plot_model
 from models import save_model_summary
 from TrainerClass import ModelTrainer
 from augment_utils import chooseAugments
-import sys
 import argparse
 from pathlib import PurePath
+from parsingFunctions import decodeParserSched, logArgs
+
 if sys.stdin and sys.stdin.isatty():
     gFromShell=True
     ROOT_DIR = os.path.abspath(os.path.join(__file__, os.pardir))
@@ -70,7 +72,7 @@ def getArguments():
     parser.add_argument('-a', '--mPlotAll', default=1, type=int, 
                         help='Plot all resolutions 1 or only active loss level 0')
     
-    parser.add_argument('-f', '--mUnfreezeRate', nargs = '+', type=float, 
+    parser.add_argument('-f', '--mUnfreezeRate', nargs = '+', type=float, default = [300, 500],
                         help='Start epoch and rate at which to unfreeze backbone network when fine-tuning')
 
     parser.add_argument('-i', '--mLRSched', nargs = '+', default=[0, 1e-4, 301, 1e-5, 500, 1e-6, 549, 1e-7], type=float, 
@@ -97,12 +99,6 @@ def getArguments():
     
     return parser
 
-def decodeParserSched(iList, iEpKey=int, iValKey= int):
-    oEpList, oValList = [], []
-    for i in range(len(iList)//2):
-        oEpList.append(iEpKey(iList[2*i]))
-        oValList.append(iValKey(iList[2*i+1]))
-    return oEpList, oValList
 #%%
 if __name__ =='__main__':
     
@@ -129,6 +125,8 @@ if __name__ =='__main__':
     wWithPath = bool(wArgs.mWithPath)
     wAugments = wArgs.mAugments
     wLossLvlEpList, wLossLvlFlagList = decodeParserSched(wArgs.mLossLvlSched)
+    wCkptPath = wArgs.mCkpt
+    
     
 #%%
     print('\nLoading Training Data')
@@ -148,10 +146,14 @@ if __name__ =='__main__':
     wOptimizer = tf.keras.optimizers.Adam(learning_rate= wLRList[0], clipnorm=1., clipvalue=0.5) 
     
 #%%
-    wSaveFolder = "ep_{}-{}_lr_{:.0e}".format(wEpochs[0], wEpochs[1], wLRList[0])
+    wScriptName=os.path.splitext(os.path.basename(__file__))[0]
+    wSaveFolder = "{}_ep_{}-{}_lr_{:.0e}".format(wScriptName, wEpochs[0], wEpochs[1], wLRList[0])
     wSaveDir = makeNewDirV2(ROOT_DIR, wSaveFolder, wModelFlag, 0)
     os.makedirs(wSaveDir, exist_ok=True)
-    print(wSaveDir)
+    print('\nSave dir: %s'%wSaveDir)
+    wArgLogName=wScriptName +'_args.csv'
+    logArgs(wArgs, wSaveDir, wArgLogName)
+    print('\nSaved argument Log to: %s'%wArgLogName)
 
 #%%
     plot_model(wModel.layers[-1], os.path.join(wSaveDir, 'top_model.png'), show_shapes = True)
@@ -164,13 +166,12 @@ if __name__ =='__main__':
     
     wTrainer = ModelTrainer(wModel, wOptimizer)
     
-    wTrainer.setPlotFreq(iPlotFreq=wPlotFreq, iPlotAll=wPlotAll)
-    if wArgs.mCkpt is None:
+    if wCkptPath is None:
         wTrainer.getModel().trainable = False 
     else:
-        wLoadDir = os.path.abspath(os.path.join(wArgs.mCkpt, os.pardir))
+        wLoadDir = os.path.abspath(os.path.join(wCkptPath, os.pardir))
         wTrainer.setLoadDir(wLoadDir)
-        wCkpt = PurePath(wArgs.mCkpt).parts[-1].split('.')[0]
+        wCkpt = PurePath(wCkptPath).parts[-1].split('.')[0]
         wTrainer.loadFromCkpt(wCkpt)
         wStart = int(wCkpt.split('_')[0])+1
         print("Automatically starting from Epoch: %s"%wStart)
@@ -179,6 +180,8 @@ if __name__ =='__main__':
         wTrainer.setLRSchedFromDict({})
         wTrainer.setBatchSizeScheduleFromDict({})
         
+    wTrainer.setPlotFreq(iPlotFreq=wPlotFreq, iPlotAll=wPlotAll)        
+    
     for wEp, wLR in zip(wEpList, wLRList):
         wTrainer.setLRSched(wEp, wLR)
     

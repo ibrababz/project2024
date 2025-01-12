@@ -17,6 +17,8 @@ from augment_utils import chooseAugments
 import sys
 import argparse
 from pathlib import PurePath
+from parsingFunctions import decodeParserSched, logArgs
+
 if sys.stdin and sys.stdin.isatty():
     gFromShell=True
     ROOT_DIR = os.path.abspath(os.path.join(__file__, os.pardir))
@@ -72,8 +74,8 @@ def getArguments():
     parser.add_argument('-a', '--mPlotAll', default=1, type=int, 
                         help='Plot all resolutions 1 or only active loss level 0')
     
-    parser.add_argument('-f', '--mUnfreezeRate', default=500, type=float, 
-                        help='Rate by which to unfreeze backbone network when fine-tuning')
+    parser.add_argument('-f', '--mUnfreezeRate', nargs = '+', type=float, 
+                        help='Start epoch and rate at which to unfreeze backbone network when fine-tuning')
 
     parser.add_argument('-i', '--mLRSched', nargs = '+', default=[0, 1e-4, 301, 1e-5, 500, 1e-6, 549, 1e-7], type=float, 
                         help='LR schedule as a list [epoch_1, LR_1, epoch_2, LR_2, etc...]')
@@ -102,12 +104,6 @@ def getArguments():
        
     return parser
 
-def decodeParserSched(iList, iEpKey=int, iValKey= int):
-    oEpList, oValList = [], []
-    for i in range(len(iList)//2):
-        oEpList.append(iEpKey(iList[2*i]))
-        oValList.append(iValKey(iList[2*i+1]))
-    return oEpList, oValList
 #%%
 if __name__ =='__main__':
     
@@ -128,7 +124,7 @@ if __name__ =='__main__':
     wPlotAll = bool(wArgs.mPlotAll)
     wEpList, wLRList = decodeParserSched(wArgs.mLRSched, iValKey=float) 
     wCheckPointFreq = wArgs.mCkptFreq
-    wUnfreezeRate = wArgs.mUnfreezeRate
+    wUnfreezeStartEpoch, wUnfreezeRate = decodeParserSched(wArgs.mUnfreezeRate, int, float)
     wLastN = wArgs.mSaveLastN
     wLogFreq = wArgs.mLogFreq
     wWithPath = bool(wArgs.mWithPath)
@@ -136,7 +132,7 @@ if __name__ =='__main__':
     wLossLvlEpList, wLossLvlFlagList = decodeParserSched(wArgs.mLossLvlSched)
     wTransferLearnLoadPath = wArgs.mTransferLearnLoadPath
     wDepthList, wKernelList = decodeParserSched(wArgs.mDepthKernelList)
-    
+    wCkptPath = wArgs.mCkpt
 #%%
     print('\nLoading Training Data')
     wDataObjectList = loadDataFilesAsObjects(iSrcPath)
@@ -155,10 +151,14 @@ if __name__ =='__main__':
     wOptimizer = tf.keras.optimizers.Adam(learning_rate= wLRList[0], clipnorm=1., clipvalue=0.5) 
     
 #%%
-    wSaveFolder = "ep_{}-{}_lr_{:.0e}".format(wEpochs[0], wEpochs[1], wLRList[0])
+    wScriptName=os.path.splitext(os.path.basename(__file__))[0]
+    wSaveFolder = "{}_ep_{}-{}_lr_{:.0e}".format(wScriptName, wEpochs[0], wEpochs[1], wLRList[0])
     wSaveDir = makeNewDirV2(ROOT_DIR, wSaveFolder, wModelFlag, 0)
     os.makedirs(wSaveDir, exist_ok=True)
-    print(wSaveDir)
+    print('\nSave dir: %s'%wSaveDir)
+    wArgLogName=wScriptName +'_args.csv'
+    logArgs(wArgs, wSaveDir, wArgLogName)
+    print('\nSaved argument Log to: %s'%wArgLogName)
 
 #%%
     plot_model(wModel.layers[-1], os.path.join(wSaveDir, 'top_model.png'), show_shapes = True)
@@ -171,7 +171,7 @@ if __name__ =='__main__':
     
     wTrainer = ModelTransLearn(wModel, wOptimizer)
     wEncoderIdxList, wDecoderNameList=[-2, 142, 80], ['top_15', 'top_27', 'top_37']
-    if wArgs.mCkpt is None:
+    if wCkptPath is None:
         wTrainer.setTransferLearnLoadPath(wTransferLearnLoadPath)
         wTrainer.loadTransferLearn()
         wTrainer.removeClassificationLayers(wEncoderIdxList, wDecoderNameList)
@@ -180,9 +180,9 @@ if __name__ =='__main__':
     else:
         wTrainer.removeClassificationLayers(wEncoderIdxList, wDecoderNameList)
         wTrainer.addTransferLearnLayers(wEncoderIdxList, wDecoderNameList, wDepthList, wKernelList)
-        wLoadDir = os.path.abspath(os.path.join(wArgs.mCkpt, os.pardir))
+        wLoadDir = os.path.abspath(os.path.join(wCkptPath, os.pardir))
         wTrainer.setLoadDir(wLoadDir)
-        wCkpt = PurePath(wArgs.mCkpt).parts[-1].split('.')[0]
+        wCkpt = PurePath(wCkptPath).parts[-1].split('.')[0]
         wTrainer.freezeBackBone()
         wTrainer.loadFromCkpt(wCkpt)
         wStart = int(wCkpt.split('_')[0])+1
@@ -191,7 +191,7 @@ if __name__ =='__main__':
         wTrainer.setLayerFreezeScheduleFromDict({})
         wTrainer.setLRSchedFromDict({})
         wTrainer.setBatchSizeScheduleFromDict({})
-    
+        
     wTrainer.setPlotFreq(iPlotFreq=wPlotFreq, iPlotAll=wPlotAll)        
     
     for wEp, wLR in zip(wEpList, wLRList):
@@ -202,7 +202,7 @@ if __name__ =='__main__':
     wTrainer.setLossDict(iLossDict = {'Pos': 5., 'Neg': 5.*5., 'Dice': 1.})
     # wTrainer.setLossDict(iLossDict = {'Pos': 5., 'Neg': 5.*5., 'Dice': 1., 'Cart':5.*5.})
     wBaseModelLayers = [wLayer.name for wLayer in wTrainer.getModel().layers[::-1][1:] if not('batch' in str(type(wLayer)).lower()  and 'normalization' in str(type(wLayer)).lower())]
-    wTrainer.setGradualUnfreeze(iStart=wEpList[1], iRate=wUnfreezeRate, iLayerNames=wBaseModelLayers)    
+    wTrainer.setGradualUnfreeze(iStart=wUnfreezeStartEpoch[0], iRate=wUnfreezeRate[0], iLayerNames=wBaseModelLayers)    
 
     wTrainer.setSaveDir(iSaveDir=wSaveDir)
     wTrainer.setData(iTrainData=wDataObjectList, iValidData=wValidDataObjectList)#, iBatchSize=wBatchSize)
