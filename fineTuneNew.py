@@ -229,6 +229,7 @@ if __name__ =='__main__':
         print("KeyboardInterrupt: Attempting to log final information")
         wTrainer.logFile()
         wTrainer.clearLossLogBuffer()
+        wTrainer.plotLosses()
         print("Done!")
     
 #%% Load Start

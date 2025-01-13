@@ -4,6 +4,7 @@ Created on Mon Jun 24 16:03:37 2024
 
 @author: i_bab
 """
+from timeit import time
 import cv2 as cv
 import os
 from joblib import dump, load
@@ -25,8 +26,6 @@ from shutil import rmtree
 from imageUtils import getLossFig
 
 from models import removeClassificationLayers, addTransferLearnLayersV3
-
-
 
 class ModelTrainer:
     def __init__(self, iModel, iOptimizer):
@@ -569,6 +568,7 @@ class ModelTrainer:
         wLastN = self.getMinValSaveLastN()
 
         for i in range(wStart, wEnd):
+            wTs = time.perf_counter()
             self.setEpoch(i)
             self.checkBatchSizeSchedule()
             self.checkLRSched()
@@ -586,26 +586,30 @@ class ModelTrainer:
 
             self.addRemoveSavedModels(wLastN, wValidLossPerEpoch)
             
-            if self.plotCondition() or (self.getLoadFlag() and self.getEpoch()-self.getLoadEpoch() == 1):
-                wPlt = self.plotLosses()
-                if not self.getFromShell():
-                    wPlt.show()
-                else:
-                    try:
-                        wPlt.savefig(os.path.join(self.getSaveDir(),'loss_tracker.png'))
-                    except PermissionError:
-                        print("Permission Error, failed to save loss tracker plot, will try on next checkpoint")
-                    
-                wPlt.close()
-                        
+            if self.logCondition() or (self.getLoadFlag() and self.getEpoch()-self.getLoadEpoch() == 1):
+                self.plotLosses()
+
             B.set_value(self.mOptimizer.iterations, i)
-            print('ep:', self.getEpoch(), 'tr L:', np.round(wTrainLossPerEpoch,3), 'val L:', np.round(wValidLossPerEpoch,3), 'min_V:', np.round(self.getMinValLoss(), 3))
+            print('ep:', self.getEpoch(), 'tr L:', np.round(wTrainLossPerEpoch,3), 'val L:', np.round(wValidLossPerEpoch,3), 'min_V:', np.round(self.getMinValLoss(), 3), 'dt:', np.round(time.perf_counter()-wTs,2))
             wLine = "{},{:.2f},{:.2f},{:.2f}\n".format(self.getEpoch(),np.round(wTrainLossPerEpoch,3), np.round(wValidLossPerEpoch,3), np.round(self.getMinValLoss(), 3))
+            
             self.saveEveryN()
             self.logEveryN(wLine)
             if self.checkBreak():
                 break 
     
+    def plotLosses(self):
+        wPlt = self.getLossPlots()
+        if not self.getFromShell():
+            wPlt.show()
+        else:
+            try:
+                wPlt.savefig(os.path.join(self.getSaveDir(),'loss_tracker.png'))
+            except PermissionError:
+                print("Permission Error, failed to save loss tracker plot, will try on next checkpoint")
+            
+        wPlt.close()
+        
     def clearLossLogBuffer(self):
         self.setLossLogBuffer([])
     
@@ -646,10 +650,12 @@ class ModelTrainer:
     def getLogFileArgs(self):
         return self.mLogFileArgs
     
+    def logCondition(self):
+        return (self.getEpoch()+1)%self.getLogFreq()== 0
+    
     def logEveryN(self, iLine):
-        wEpoch=self.getEpoch()   
         self.updateLossLogBuffer(iLine)
-        if (wEpoch+1)%self.getLogFreq()==0:
+        if self.logCondition():
             self.logFile()
    
     def computeVectors(self, iPredList):
@@ -859,7 +865,8 @@ class ModelTrainer:
     def getFromShell(self):
         return self.mFromShell
     
-    def plotLosses(self):
+    
+    def getLossPlots(self):
         wEpoch=self.getEpoch()
         wTrainLossTracker = self.getLossTracker(True)
         wValidLossTracker = self.getLossTracker(False)
