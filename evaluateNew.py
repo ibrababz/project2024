@@ -22,7 +22,7 @@ if __name__ =='__main__':
 #%%
     wNorm = 255.
     # iTestSrcDir = "data4k\\test_real"
-    iTestSrcDir, iRes = "data4k\\test_real_448_res2", 3
+    iTestSrcDir, iRes, iDepth = "data4k\\test_real_448_res2", 3, 1
     iTestSrcPath = os.path.join(ROOT_DIR, iTestSrcDir)         
     wTestDataObjectList = loadDataFilesAsObjects(iTestSrcPath)        
         
@@ -30,7 +30,7 @@ if __name__ =='__main__':
     wShape = wTestDataObjectList[0].getShape()
     wModelFlag = 'resnet'
     wDecLR  = 0.0001
-    wModel = makeYoloType(wShape, wModelFlag, iRes)
+    wModel = makeYoloType(wShape, wModelFlag, iRes, iDeeper=iDepth)
     wOptimizer = tf.keras.optimizers.Adam(learning_rate= wDecLR ) 
     wBatchSize = 4
     

@@ -96,6 +96,9 @@ def getArguments():
     parser.add_argument('-q', '--mLossLvlSched', nargs = '+', default=[0, 0, 100, 1, 200, 2, 300, -3], type=int, 
                         help='Loss level scheduling [epoch_1, losslvlflag_2, epoch_2, losslvlflag_2, etc...]')
     
+    parser.add_argument('-dp', '--mDeeper', default=0, type=int, 
+                        help='Plot all resolutions 1 or only active loss level 0')
+    
     
     return parser
 
@@ -126,6 +129,7 @@ if __name__ =='__main__':
     wAugments = wArgs.mAugments
     wLossLvlEpList, wLossLvlFlagList = decodeParserSched(wArgs.mLossLvlSched)
     wCkptPath = wArgs.mCkpt
+    wDeeper = bool(wArgs.mDeeper)
     
     
 #%%
@@ -142,7 +146,7 @@ if __name__ =='__main__':
     wValidDataObjectList = loadDataFilesAsObjects(iValidSrcPath)        
     print('\nDone!')
 #%%
-    wModel = makeYoloType(wDataObjectList[0].getShape(), wModelFlag, wRes)
+    wModel = makeYoloType(wDataObjectList[0].getShape(), wModelFlag, wRes, iDeeper=wDeeper)
     wOptimizer = tf.keras.optimizers.Adam(learning_rate= wLRList[0], clipnorm=1., clipvalue=0.5) 
     
 #%%

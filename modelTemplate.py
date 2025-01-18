@@ -47,7 +47,6 @@ def make_top_model(base_model_output_shape, base_model_layeri_output_shape, base
     x1 = tf.keras.layers.Dropout(0.5)(x1)
     x1 = tf.keras.layers.Conv2D(256,(3,3), activation = 'relu', padding = "same", name='top_23')(x1)
     x1 = tf.keras.layers.Dropout(0.5)(x1)
-
     x1 = tf.keras.layers.Conv2D(256,(3,3), activation = 'relu', padding = "same", name='top_28')(x1)
     x1 = tf.keras.layers.Dropout(0.5)(x1)
     x1 = tf.keras.layers.Conv2D(128,(1,1), activation = 'relu', padding = "same", name='top_29')(x1)
@@ -74,7 +73,6 @@ def make_top_model(base_model_output_shape, base_model_layeri_output_shape, base
     x2 = tf.keras.layers.Dropout(0.5)(x2)
     x2 = tf.keras.layers.Conv2D(256,(3,3), activation = 'relu', padding = "same", name='top_32')(x2)
     x2 = tf.keras.layers.Dropout(0.5)(x2)
-
     x2 = tf.keras.layers.Conv2D(256,(3,3), activation = 'relu', padding = "same", name='top_33')(x2)
     x2 = tf.keras.layers.Dropout(0.5)(x2)
     x2 = tf.keras.layers.Conv2D(128,(1,1), activation = 'relu', padding = "same", name='top_34')(x2)

@@ -22,7 +22,7 @@ def save_model_summary(save_dir, model):
         model.summary(print_fn = fwriting.write_file)
         
         
-def makeYoloType(iShape, iFlag = 'resnet', iRes = 2):
+def makeYoloType(iShape, iFlag = 'resnet', iRes = 2, iDeeper=False):
     H, W, C = iShape
     
     if iFlag == 'resnet':
@@ -43,8 +43,11 @@ def makeYoloType(iShape, iFlag = 'resnet', iRes = 2):
     elif iRes == 3:
         base_model2 = tf.keras.models.Model([base_model.inputs], [base_model.output, base_model.layers[index].output,  base_model.layers[index2].output], name = 'base_model2')
         base_model2.trainable = False
-        top_model = make_top_model_v3(base_model2.output[0].shape[1:], base_model2.output[1].shape[1:], base_model2.output[2].shape[1:])
-        
+        if not iDeeper:
+            top_model = make_top_model_v3(base_model2.output[0].shape[1:], base_model2.output[1].shape[1:], base_model2.output[2].shape[1:])
+        else:
+            top_model = make_top_model_v5([base_model2.output[0].shape[1:], base_model2.output[1].shape[1:], base_model2.output[2].shape[1:]], iWithTop=True)
+            
     model = tf.keras.models.Model(base_model2.inputs, top_model(base_model2.output))
     return model
 
@@ -251,7 +254,7 @@ def addTransferLearnLayersV3(iModel, iEncoderOutputIdxList, iDecoderOutputNames,
     return tf.keras.models.Model(wEncoder.input, wX, name='full_tl_model')
 
         
-def addConv2DBlock(iInput, iDepthList, iKernelList, iActivation='relu', iPadding='same', iDropout=0.5, iNamePrefix='top', iNameList=None):
+def addConv2DBlock(iInput, iDepthList, iKernelList, iActivation='relu', iPadding='same', iDropout=0.5, iBatchNorm=True, iNamePrefix='top', iNameList=None):
     wX = iInput
     
     for i in range(len(iDepthList)):
@@ -264,6 +267,8 @@ def addConv2DBlock(iInput, iDepthList, iKernelList, iActivation='relu', iPadding
         wX =tf.keras.layers.Conv2D(wDepth, wPool, activation=iActivation, padding=iPadding, name=wName)(wX)
         if iDropout:
             wX = tf.keras.layers.Dropout(iDropout, name='_'.join(['dropout']+wName.split('_')[1:]))(wX)
+        if iBatchNorm:
+            wX = tf.keras.layers.BatchNormalization(name='_'.join(['batchnorm']+wName.split('_')[1:]))(wX)
     return wX
 
 def addMultiConv2DBlocks(iInputList, iDepthListList, iKernelListList, iActivation='relu', iPadding='same', iDropout=0.5, iNamePrefix='top'):
@@ -332,7 +337,7 @@ def reduceInputDepth(iInput, iReduceDimDepth, iIdx, iActivation='relu', iPadding
     return oInput
 
 
-def createDecoderModel(iShapeList, iInputNameList, iReduceDimDepthList, iDepthListList, iKernelListList, iActivation='relu', iPadding='same', iDropout=0.5, iWithTop=False, iPrefix='top'):
+def createDecoderModel(iShapeList, iInputNameList, iReduceDimDepthList, iDepthListList, iKernelListList, iActivation='relu', iPadding='same', iDropout=0.5, iBatchNorm=True, iWithTop=False, iPrefix='top'):
     wEncoderOutputList = []
     wReduceDepthInputs = []
     wXConvBlockList =[]
@@ -343,12 +348,12 @@ def createDecoderModel(iShapeList, iInputNameList, iReduceDimDepthList, iDepthLi
         wReduceDepthInputs.append(reduceInputDepth(wEncoderOutputList[i], iReduceDimDepthList[i], i, iActivation, iPadding, iDropout, iPrefix))
         wNameList = [f"top_{i+1}{j+1}" for j in range(len(iDepthListList[i]))]
         if i==0:
-            wXConvBlockList.append(addConv2DBlock(wReduceDepthInputs[i], iDepthListList[i], iKernelListList[i], iActivation, iPadding, iDropout, iPrefix, wNameList))
+            wXConvBlockList.append(addConv2DBlock(wReduceDepthInputs[i], iDepthListList[i], iKernelListList[i], iActivation, iPadding, iDropout, iBatchNorm, iPrefix, wNameList))
         else:
             wName=f"top_{i+1}0"
             wXUpList.append(tf.keras.layers.UpSampling2D(size=(2,2), name=wName)(wXConvBlockList[i-1]))
             wXCatList.append(tf.keras.layers.concatenate([wXUpList[i-1],wReduceDepthInputs[i]], axis=3, name = '_'.join(['concatenate']+wName.split('_')[1:])))
-            wXConvBlockList.append(addConv2DBlock(wXCatList[i-1], iDepthListList[i], iKernelListList[i], iActivation, iPadding, iDropout, iPrefix, wNameList))
+            wXConvBlockList.append(addConv2DBlock(wXCatList[i-1], iDepthListList[i], iKernelListList[i], iActivation, iPadding, iDropout, iBatchNorm, iPrefix, wNameList))
        
     if iWithTop:
         for i in range(len(wXConvBlockList)):
@@ -365,7 +370,15 @@ def make_top_model_v4(iWithTop):
     wKernelListList= [[1,3,1,3,1], [1,3,1,3,1,3,1], [1,3,1,3,1,3,1]]
     wInputNameList= ['input_to_top', "input_from_base_layeri", "input_from_base_layeri2"]
 
-    return createDecoderModel(wShapeList, wInputNameList, wReduceDimDepthList, wDepthListList, wKernelListList, iActivation='relu', iPadding='same', iDropout=0.5, iWithTop=iWithTop)
+    return createDecoderModel(wShapeList, wInputNameList, wReduceDimDepthList, wDepthListList, wKernelListList, iActivation='relu', iPadding='same', iDropout=0.5, iBatchNorm=True, iWithTop=iWithTop)
+def make_top_model_v5(iShapeList, iWithTop):
+    # wShapeList = [(14,14,2048), (28,28,1024), (56,56,512)]
+    wReduceDimDepthList = [None, 256, 256]
+    wDepthListList = [[128,256,256,512,512,1024,512,512,256,256,128]]*3
+    wKernelListList= [[1,3,1,3,1,3,1,3,1,3,1]]*3
+    wInputNameList= ['input_to_top', "input_from_base_layeri", "input_from_base_layeri2"]
+
+    return createDecoderModel(iShapeList, wInputNameList, wReduceDimDepthList, wDepthListList, wKernelListList, iActivation='relu', iPadding='same', iDropout=0.5, iBatchNorm=True, iWithTop=iWithTop)
 
 
 if __name__ =='__main__':
