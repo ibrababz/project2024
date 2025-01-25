@@ -74,7 +74,7 @@ def getArguments():
     parser.add_argument('-a', '--mPlotAll', default=1, type=int, 
                         help='Plot all resolutions 1 or only active loss level 0')
     
-    parser.add_argument('-f', '--mUnfreezeRate', nargs = '+', type=float, 
+    parser.add_argument('-f', '--mUnfreezeRate', nargs = '+', type=float, default = [300, 500],
                         help='Start epoch and rate at which to unfreeze backbone network when fine-tuning')
 
     parser.add_argument('-i', '--mLRSched', nargs = '+', default=[0, 1e-4, 301, 1e-5, 500, 1e-6, 549, 1e-7], type=float, 
@@ -98,7 +98,10 @@ def getArguments():
     parser.add_argument('-q', '--mLossLvlSched', nargs = '+', default=[0, 0, 100, 1, 200, 2, 300, -3], type=int, 
                         help='Loss level scheduling [epoch_1, losslvlflag_2, epoch_2, losslvlflag_2, etc...]')
     
-
+    parser.add_argument('-dp', '--mDeeper', default=0, type=int, 
+                        help='Plot all resolutions 1 or only active loss level 0')
+    
+    
     return parser
 
 #%%
@@ -129,6 +132,8 @@ if __name__ =='__main__':
     wLossLvlEpList, wLossLvlFlagList = decodeParserSched(wArgs.mLossLvlSched)
     wFineTuneLoadPath = wArgs.mFineTuneLoadPath
     wCkptPath = wArgs.mCkpt
+    wDeeper = wArgs.mDeeper
+    
     
 #%%
     print('\nLoading Training Data')
@@ -144,7 +149,7 @@ if __name__ =='__main__':
     wValidDataObjectList = loadDataFilesAsObjects(iValidSrcPath)        
     print('\nDone!')
 #%%
-    wModel = makeYoloType(wDataObjectList[0].getShape(), wModelFlag, wRes)
+    wModel = makeYoloType(wDataObjectList[0].getShape(), wModelFlag, wRes, iDeeper=wDeeper)
     wOptimizer = tf.keras.optimizers.Adam(learning_rate= wLRList[0], clipnorm=1., clipvalue=0.5) 
     
 #%%

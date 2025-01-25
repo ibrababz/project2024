@@ -22,7 +22,7 @@ if __name__ =='__main__':
 #%%
     wNorm = 255.
     # iTestSrcDir = "data4k\\test_real"
-    iTestSrcDir, iRes, iDepth = "data4k\\test_real_448_res2", 3, 1
+    iTestSrcDir, iRes, iDepth = "data4k\\test_real_448_res2", 3, 2
     iTestSrcPath = os.path.join(ROOT_DIR, iTestSrcDir)         
     wTestDataObjectList = loadDataFilesAsObjects(iTestSrcPath)        
         
@@ -60,9 +60,9 @@ if __name__ =='__main__':
     wEvaluator.setSavePlotType('truth_acts')
     wEvaluator.setSavePlots(False)
 #%%    
-    for iResIdx in range(3):
+    for iResIdx in range(0,3):
         print("Res:%s"%(iResIdx+1))
-        wStart, wEnd, wStep = 0.5, 1, 0.025
+        wStart, wEnd, wStep = 0.875, 1, 0.025/4
         wNoSteps = int((wEnd-wStart)//wStep)+1
         wThreshList = [round(wStart+i*wStep,3) for i in range(wNoSteps)]
         # wThreshList = [.85]

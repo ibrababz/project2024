@@ -102,6 +102,8 @@ def getArguments():
                         help='Loss level scheduling [epoch_1, losslvlflag_2, epoch_2, losslvlflag_2, etc...]')
     
        
+    parser.add_argument('-dp', '--mDeeper', default=0, type=int, 
+                        help='Plot all resolutions 1 or only active loss level 0')
     return parser
 
 #%%
@@ -133,6 +135,9 @@ if __name__ =='__main__':
     wTransferLearnLoadPath = wArgs.mTransferLearnLoadPath
     wDepthList, wKernelList = decodeParserSched(wArgs.mDepthKernelList)
     wCkptPath = wArgs.mCkpt
+    wDeeper = wArgs.mDeeper
+    
+    
 #%%
     print('\nLoading Training Data')
     wDataObjectList = loadDataFilesAsObjects(iSrcPath)
@@ -147,7 +152,7 @@ if __name__ =='__main__':
     wValidDataObjectList = loadDataFilesAsObjects(iValidSrcPath)        
     print('\nDone!')
 #%%
-    wModel = makeYoloType(wDataObjectList[0].getShape(), wModelFlag, wRes)
+    wModel = makeYoloType(wDataObjectList[0].getShape(), wModelFlag, wRes, iDeeper=wDeeper)
     wOptimizer = tf.keras.optimizers.Adam(learning_rate= wLRList[0], clipnorm=1., clipvalue=0.5) 
     
 #%%
@@ -170,7 +175,8 @@ if __name__ =='__main__':
 #%% Fresh Start
     
     wTrainer = ModelTransLearn(wModel, wOptimizer)
-    wEncoderIdxList, wDecoderNameList=[-2, 142, 80], ['top_15', 'top_27', 'top_37']
+    # wEncoderIdxList, wDecoderNameList=[-2, 142, 80], ['top_15', 'top_27', 'top_37']
+    wEncoderIdxList, wDecoderNameList=[-2, 142, 80], ['top_111', 'top_211', 'top_311']
     if wCkptPath is None:
         wTrainer.setTransferLearnLoadPath(wTransferLearnLoadPath)
         wTrainer.loadTransferLearn()

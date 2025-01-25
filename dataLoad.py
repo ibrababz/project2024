@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 from imgaug.augmentables.heatmaps import HeatmapsOnImage
 from RandomSampler import RandSampler
 from copy import deepcopy
-
+from timeit import time
 
 def makeNewDir(iSaveDir, iIdx=0, iSuffix='_test_'):
     wSaveDir = iSaveDir + iSuffix + adjust_number(iIdx, 2)
@@ -143,9 +143,12 @@ def genDataFilesFromOrgImBatchGen(iOrgImBatchGen, iImDim, iMapDims, iDestPath = 
 
             
 def genDataFiles(iWeedBatchGen, iDestPath = None, iNameType = 'train', iUintFlag = 0):
+    print("")
     wSize = iWeedBatchGen.getSize()
+    wStrLen = len(str(wSize))
     os.makedirs(iDestPath, exist_ok=True)
     for i, batch in zip(range(wSize), iWeedBatchGen):
+        wT0 = time.perf_counter()
         batchNames, batchImages, batchMasks, batchMaps = batch
         #print("myWeedBatchGen.getCounter() = %s" %iWeedBatchGen.getCounter())
         #print("batchImages[0].dtype %s" %batchImages[0].dtype)
@@ -153,12 +156,14 @@ def genDataFiles(iWeedBatchGen, iDestPath = None, iNameType = 'train', iUintFlag
         wDataDir = os.path.join(iDestPath, wDataName)
         # print(wDataDir)
         os.makedirs(wDataDir, exist_ok=True)
-        wImageName = wDataName + '.npy'
+        # wImageName = wDataName + '.npy'
+        wImageName = wDataName + '.bmp'
         wWriteImagePath = os.path.join(wDataDir,wImageName)
         wImage = batchImages[0]
         if iUintFlag:
             wImage = np.uint8(np.round(wImage*255., 0))
-        np.save(wWriteImagePath, wImage)
+        # np.save(wWriteImagePath, wImage)
+        cv.imwrite(wWriteImagePath, wImage)
         # print(wWriteImagePath)
         wMapDir = os.path.join(wDataDir, "maps") 
         os.makedirs(wMapDir, exist_ok=True)
@@ -173,43 +178,57 @@ def genDataFiles(iWeedBatchGen, iDestPath = None, iNameType = 'train', iUintFlag
             #print(len(batchNames[0]))
             for wName in batchNames[0]:
                 fwriting.write_file(wName)
-        #     print(wWriteMapPath)     
-        # show_wait(np.hstack(batchImages), 2)
-        # show_wait(np.hstack(batchMasks), 2)
+        wT1=time.perf_counter()
+        print(f"\rGenerated sample {i+1:{wStrLen}}/{wSize} in {wT1-wT0:.2e}s", end='')
 
 def loadDataFilesAsObjects(iSrcPath, iStopFlag = 0):
     oDataObjectList = []
-    for i, wFolder in zip(range(len(os.listdir(iSrcPath))),os.listdir(iSrcPath)): 
+    j=0
+    wSrcDirList = os.listdir(iSrcPath)
+    wLen=len(wSrcDirList)
+    wStrLen=len(str(wLen))
+    wNoNonData=0
+    wTStart=time.perf_counter()
+    for i, wFolder in zip(range(wLen), wSrcDirList): 
+        wT0= time.perf_counter()
         if iStopFlag and i == iStopFlag:
             break
         wDataPath = os.path.join(iSrcPath,wFolder)
-        wNameList = []
-        wImSrcPath = None
-        for wDir in os.listdir(wDataPath):
-            if wDir.split('.')[-1] == 'npy':
-                wImage = np.load(os.path.join(wDataPath,wDir))
-            elif wDir.split('.')[-1] == 'txt':
-                wFilePath = os.path.join(wDataPath, wDir)
-                wFile = open(wFilePath, "r")
-                for wLine in wFile:
-                    wImSrcPath = wLine.strip('\n')
-                wFile.close()
-            elif wDir == 'maps':
-                wMapDir = os.path.join(wDataPath, wDir)
-                wMapList= []
-                for wMapFile in os.listdir(wMapDir):
-                    wMap = np.load(os.path.join(wMapDir,wMapFile))
-                    wMapList.append(wMap)
-            elif wDir == 'names':
-                wNamesDir = os.path.join(wDataPath, wDir)
-                wNamesFile = os.listdir(wNamesDir)[0]
-                wNamesFilePath = os.path.join(wNamesDir, wNamesFile)
-                wFile = open(wNamesFilePath, "r")
-                for wLine in wFile:
-                    wNameList.append(wLine.strip('\n'))
-                wFile.close()
-                
-        oDataObjectList.append(LoadedDataObject(wImage, wMapList, wImSrcPath, wNameList))
+        if os.path.isdir(wDataPath):
+            wNameList = []
+            wImSrcPath = None
+            for wDir in os.listdir(wDataPath):
+                if wDir.split('.')[-1] == 'npy':
+                    wImage = np.load(os.path.join(wDataPath,wDir))
+                elif wDir.split('.')[-1] == 'bmp':
+                    wImage=cv.imread(os.path.join(wDataPath,wDir))
+                elif wDir.split('.')[-1] == 'txt':
+                    wFilePath = os.path.join(wDataPath, wDir)
+                    wFile = open(wFilePath, "r")
+                    for wLine in wFile:
+                        wImSrcPath = wLine.strip('\n')
+                    wFile.close()
+                elif wDir == 'maps':
+                    wMapDir = os.path.join(wDataPath, wDir)
+                    wMapList= []
+                    for wMapFile in os.listdir(wMapDir):
+                        wMap = np.load(os.path.join(wMapDir,wMapFile))
+                        wMapList.append(wMap)
+                elif wDir == 'names':
+                    wNamesDir = os.path.join(wDataPath, wDir)
+                    wNamesFile = os.listdir(wNamesDir)[0]
+                    wNamesFilePath = os.path.join(wNamesDir, wNamesFile)
+                    wFile = open(wNamesFilePath, "r")
+                    for wLine in wFile:
+                        wNameList.append(wLine.strip('\n'))
+                    wFile.close()
+                    
+            oDataObjectList.append(LoadedDataObject(wImage, wMapList, wImSrcPath, wNameList))
+            wT1= time.perf_counter()
+            print(f"\rLoaded sample {j+1:{wStrLen}}/{wLen-wNoNonData:{wStrLen}} in {wT1-wT0:.2e}s, Elapsed: {wT1-wTStart:4.2e}s", end='')
+            j+=1
+        else:
+            wNoNonData+=1  
 
     return oDataObjectList
             

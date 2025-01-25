@@ -14,6 +14,7 @@ from dataLoad import GenerateWeedDataList, WeedDataLoader, RandomWeedBatchGenera
 from sklearn.model_selection import train_test_split
 from dataLoad import genDataFiles
 import argparse
+from parsingFunctions import logArgs
 # from pathlib import PurePath
 
     
@@ -40,7 +41,7 @@ def getArguments():
                         help='Height and Width dimensions of desired image shape i.e. H W')
     
     parser.add_argument('-s', '--mSrcDim', nargs='+', default=[480, 640], type = int,
-                        help='Height and Width dimensions of desired image shape i.e. H W')
+                        help='Height and Width dimensions of source image shape i.e. H W')
     
     parser.add_argument('-w', '--mWeedPath', default=os.path.join(*[gDefaultDataDir, "data2019", "1", "train1"]),
                         help='Full path weed image folder')
@@ -48,7 +49,7 @@ def getArguments():
     parser.add_argument('-m', '--mMaskPath', default=os.path.join(*[gDefaultDataDir, "data2019", "1", "train1_contrast_masks_clean"]),
                         help='Full path mask image folder')
     
-    parser.add_argument('-g', '--mGrassPath', default=os.path.join(*[gDefaultDataDir, "data2019", "0","train1_0_grass"]),
+    parser.add_argument('-g', '--mGrassPath', nargs='+', default=[os.path.join(*[gDefaultDataDir, "data2019", "0","train1_0_grass"])],
                         help='Full path grass image folder')
     
     parser.add_argument('-n', '--mWeedSamples', default=4, type=int, 
@@ -123,7 +124,7 @@ if __name__ == '__main__':
     src_path3 = wArgs.mGrassPath
     
     
-    ValidLenPercent = wArgs.mValidFraction
+    
     
     wColorTrans = bool(wArgs.mColorTrans)
     wBlend = bool(wArgs.mBlend)
@@ -131,9 +132,12 @@ if __name__ == '__main__':
     
     weedSampleSize = wArgs.mWeedSamples
     wUintFlag = not wArgs.mFloat
-    wOutputDirPath = wArgs.mOutputDirPath    
-    validSize = wArgs.mValidSize
+    wOutputDirPath = wArgs.mOutputDirPath  
     trainSize = wArgs.mTrainSize
+    ValidLenPercent = wArgs.mValidFraction
+    validSize = wArgs.mValidSize
+    if not ValidLenPercent or not validSize:
+        ValidLenPercent, validSize = 0., 0   
     #%%
     # src_folder = os.path.join(*["data2019", "1", "train1_contrast_masks_clean"])
     # src_dir = os.path.join(ROOT_DIR, src_folder)
@@ -164,9 +168,11 @@ if __name__ == '__main__':
     # scale_x, scale_y = W/Wo, H/Ho
     
     weed_list = GenerateWeedDataList(src_dir, src_dir2, pts_file, scale_x, scale_y)
-    grass_list = [cv.resize(cv.imread(os.path.join(src_path3,x)), dim, interpolation = cv.INTER_AREA) for x in  os.listdir(src_path3)]
-    
-    
+    grass_list = []
+    for wPath in src_path3:
+        grass_list+=[cv.resize(cv.imread(os.path.join(wPath,x)), dim, interpolation = cv.INTER_AREA) for x in  os.listdir(wPath)]
+    print("\nGenerating synthetic weed-on-grass images from %s weeds and %s grass samples"%(len(weed_list), len(grass_list)))
+
     # ValidLenPercent = 0.30
     if ValidLenPercent and validSize:
         weed_train, weed_valid, _, _ =  train_test_split(weed_list, weed_list, test_size = ValidLenPercent, random_state = 42)
@@ -206,10 +212,10 @@ if __name__ == '__main__':
     #%%
     
     iDestFolder = "{}_dim_{}_sample_{}_frac_{:.0e}_res_{}_blend_{}_clr_{}".format(trainSize, dstDim[0], weedSampleSize, 
-                                                                                 1-ValidLenPercent, wNMaps, wBlend, wColorTrans)
+                                                                                  1-ValidLenPercent, wNMaps, wBlend, wColorTrans)
     
     iValDestFolder = "{}_dim_{}_sample_{}_frac_{:.0e}_res_{}_blend_{}_clr_{}".format(validSize, dstDim[0], weedSampleSize, 
-                                                                                 ValidLenPercent, wNMaps, wBlend, wColorTrans)    
+                                                                                  ValidLenPercent, wNMaps, wBlend, wColorTrans)    
     if not wUintFlag:
         iDestFolder +='_float'  
         iValDestFolder +='_float'  
@@ -218,12 +224,16 @@ if __name__ == '__main__':
         iValDestFolder +='_uint'
         
     iDestPath = makeNewDirV2(wOutputDirPath, iDestFolder,'tr', 0)
+    
     if ValidLenPercent and validSize:
         iValidDestPath = makeNewDirV2(wOutputDirPath, iValDestFolder, 'val', 0)
     
-    #%%    
-
+    #%%
     genDataFiles(TrainBatchGen, iDestPath, iUintFlag=wUintFlag)
+    wScriptName=os.path.splitext(os.path.basename(__file__))[0]    
+    wArgLogName=wScriptName +'_args.csv'
+    logArgs(wArgs, iDestPath, wArgLogName)
+    print('\nSaved argument Log to: %s'%wArgLogName)    
     if ValidLenPercent and validSize:
         genDataFiles(ValidBatchGen, iValidDestPath, iUintFlag =wUintFlag)
     
