@@ -225,13 +225,65 @@ def loadDataFilesAsObjects(iSrcPath, iStopFlag = 0):
                     
             oDataObjectList.append(LoadedDataObject(wImage, wMapList, wImSrcPath, wNameList))
             wT1= time.perf_counter()
-            print(f"\rLoaded sample {j+1:{wStrLen}}/{wLen-wNoNonData:{wStrLen}} in {wT1-wT0:.2e}s, Elapsed: {wT1-wTStart:4.2e}s", end='')
+            # print(f"\rLoaded sample {j+1:{wStrLen}}/{wLen-wNoNonData:{wStrLen}} in {wT1-wT0:.2e}s, Elapsed: {wT1-wTStart:4.2e}s", end='')
             j+=1
         else:
             wNoNonData+=1  
-
+    print(f"\nTotal Elapsed Load Time: {wT1-wTStart:.2e}")
     return oDataObjectList
+
+
+def loadDataFileAsObject(iSrcSamplePath):
+    wDataPath = iSrcSamplePath
+    wNameList = []
+    wImSrcPath = None
+    for wDir in os.listdir(wDataPath):
+        if wDir.split('.')[-1] == 'npy':
+            wImage = np.load(os.path.join(wDataPath,wDir))
+        elif wDir.split('.')[-1] == 'bmp':
+            wImage=cv.imread(os.path.join(wDataPath,wDir))
+        elif wDir.split('.')[-1] == 'txt':
+            wFilePath = os.path.join(wDataPath, wDir)
+            wFile = open(wFilePath, "r")
+            for wLine in wFile:
+                wImSrcPath = wLine.strip('\n')
+            wFile.close()
+        elif wDir == 'maps':
+            wMapDir = os.path.join(wDataPath, wDir)
+            wMapList= []
+            for wMapFile in os.listdir(wMapDir):
+                wMap = np.load(os.path.join(wMapDir,wMapFile))
+                wMapList.append(wMap)
+        elif wDir == 'names':
+            wNamesDir = os.path.join(wDataPath, wDir)
+            wNamesFile = os.listdir(wNamesDir)[0]
+            wNamesFilePath = os.path.join(wNamesDir, wNamesFile)
+            wFile = open(wNamesFilePath, "r")
+            for wLine in wFile:
+                wNameList.append(wLine.strip('\n'))
+            wFile.close()
             
+    return LoadedDataObject(wImage, wMapList, wImSrcPath, wNameList)
+
+
+import multiprocessing as mp
+
+def loadDataFilesAsObjectsMP(iSrcPath):
+
+    j=0
+    wSrcDirList = os.listdir(iSrcPath)
+    wTStart=time.perf_counter()
+    wDataPathList =  [os.path.join(iSrcPath,wFolder) for wFolder in wSrcDirList if os.path.isdir(os.path.join(iSrcPath,wFolder))]
+    wLen=len(wDataPathList)
+    wStrLen=len(str(wLen))
+    wPool = mp.dummy.Pool(processes=mp.cpu_count())
+    
+    oDataObjectList= wPool.map(loadDataFileAsObject, wDataPathList)
+    wTEnd=time.perf_counter()
+    print(f"\nTotal Elapsed Load Time: {wTEnd-wTStart:.2e}")
+    return oDataObjectList
+    
+                     
 class LoadedDataObject:
     def __init__(self, iImage, iMapList, iLoadDir, iNamesList = []):
         self.mImage = iImage

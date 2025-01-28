@@ -19,6 +19,8 @@ import argparse
 from pathlib import PurePath
 from parsingFunctions import decodeParserSched, logArgs
 
+from dataLoad import loadDataFilesAsObjectsMP
+
 if sys.stdin and sys.stdin.isatty():
     gFromShell=True
     ROOT_DIR = os.path.abspath(os.path.join(__file__, os.pardir))
@@ -99,6 +101,8 @@ def getArguments():
     parser.add_argument('-dp', '--mDeeper', default=0, type=int, 
                         help='Depth of model, 0,1,2 depending on models module')
     
+    parser.add_argument('-mp', '--mMPLoad', default=0, type=int, 
+                        help='Multiprocessing for dataload')
     
     return parser
 
@@ -130,11 +134,14 @@ if __name__ =='__main__':
     wLossLvlEpList, wLossLvlFlagList = decodeParserSched(wArgs.mLossLvlSched)
     wCkptPath = wArgs.mCkpt
     wDeeper = wArgs.mDeeper
-    
-    
+    wMPLoad = wArgs.mMPLoad
 #%%
     print('\nLoading Training Data')
-    wDataObjectList = loadDataFilesAsObjects(iSrcPath)
+    if wMPLoad:
+        wDataObjectList = loadDataFilesAsObjectsMP(iSrcPath)
+    else:
+        wDataObjectList = loadDataFilesAsObjects(iSrcPath)
+    
     print('\nDone!')
 # #%%
 #     from helper import show_wait
@@ -143,7 +150,10 @@ if __name__ =='__main__':
         
 #%%  
     print('\nLoading Validation Data')
-    wValidDataObjectList = loadDataFilesAsObjects(iValidSrcPath)        
+    if wMPLoad:
+        wValidDataObjectList = loadDataFilesAsObjectsMP(iValidSrcPath) 
+    else:
+        wValidDataObjectList = loadDataFilesAsObjects(iValidSrcPath)        
     print('\nDone!')
 #%%
     wModel = makeYoloType(wDataObjectList[0].getShape(), wModelFlag, wRes, iDeeper=wDeeper)
