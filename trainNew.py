@@ -4,8 +4,10 @@ Created on Tue Aug 20 21:09:29 2024
 
 @author: i_bab
 """
-import tensorflow as tf
 import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1' 
+import tensorflow as tf
+
 import numpy as np
 import sys
 
@@ -98,8 +100,11 @@ def getArguments():
     parser.add_argument('-q', '--mLossLvlSched', nargs = '+', default=[0, 0, 100, 1, 200, 2, 300, -3], type=int, 
                         help='Loss level scheduling [epoch_1, losslvlflag_2, epoch_2, losslvlflag_2, etc...]')
     
+    parser.add_argument('-db', '--mDebug', default=0, type=int, 
+                        help='Debug 0 or 1')
+    
     parser.add_argument('-dp', '--mDeeper', default=0, type=int, 
-                        help='Depth of model, 0,1,2 depending on models module')
+                        help='Plot all resolutions 1 or only active loss level 0')
     
     parser.add_argument('-mp', '--mMPLoad', default=0, type=int, 
                         help='Multiprocessing for dataload')
@@ -133,6 +138,7 @@ if __name__ =='__main__':
     wAugments = wArgs.mAugments
     wLossLvlEpList, wLossLvlFlagList = decodeParserSched(wArgs.mLossLvlSched)
     wCkptPath = wArgs.mCkpt
+    wDebug = wArgs.mDebug 
     wDeeper = wArgs.mDeeper
     wMPLoad = wArgs.mMPLoad
 #%%
@@ -224,6 +230,7 @@ if __name__ =='__main__':
     wTrainer.setBreakEpochsVal(np.inf)
     wTrainer.setFromShell(gFromShell)
     wTrainer.setLogFreq(wLogFreq)
+    wTrainer.setDebug(wDebug)
     wTrainer.printSetupInfo()
     
 #%%  
@@ -235,6 +242,7 @@ if __name__ =='__main__':
         wTrainer.logFile()
         wTrainer.clearLossLogBuffer()
         wTrainer.plotLosses()
+        if wTrainer.getDebugDict(): wTrainer.saveDebugPlot()
         print("Done!")
     
 #%% Load Start

@@ -99,6 +99,12 @@ def getImageListFromBatch(iBatch, iNorm = 0):
         imageBatch.append(wImage)
     return imageBatch
 
+def getImageFromDataObj(iDataObj, iNorm=0):
+    oImage = iDataObj.getImage()
+    if iNorm:
+        oImage = oImage/iNorm
+    return oImage
+
 def genDataFilesFromOrgImBatchGen(iOrgImBatchGen, iImDim, iMapDims, iDestPath = None, iNameType = 'train', iNormal = 0):
     os.makedirs(iDestPath, exist_ok=True)
     wSize = iOrgImBatchGen.getDataLen()

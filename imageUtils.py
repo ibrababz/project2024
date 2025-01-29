@@ -11,6 +11,18 @@ from matplotlib.pyplot import text
 
 
 #%%
+
+def getPlotFromDict(iDict):
+    wFig = plt.figure()
+    wAx = wFig.subplots()
+    
+    
+    for wKey in iDict:
+        wAx.plot(iDict[wKey], label=wKey)
+    wAx.legend()
+    
+    return plt
+    
 def getLossFig(iEpoch, iTLoss, iVLoss, iVLines ={}):
     wEpochs = np.arange(0,iEpoch+1)
     wFig = plt.figure()
@@ -19,7 +31,7 @@ def getLossFig(iEpoch, iTLoss, iVLoss, iVLines ={}):
     wAx.plot(wEpochs, iVLoss, label='valid')
     
     wVLineXs = [int(wKey) for wKey in iVLines if int(wKey) <= iEpoch]
-    wVLineTexts = [f"{iVLines[wKey]:.0e}" for wKey in iVLines if int(wKey) <= iEpoch]    
+    wVLineTexts = [f"LR\n{iVLines[wKey]:.0e}" for wKey in iVLines if int(wKey) <= iEpoch]    
     wMaxY = max([max(iTLoss), max(iVLoss)])
     
     wAx.vlines(wVLineXs, ymin=0, ymax= 1.5*wMaxY, colors='red', linestyle='dashed', linewidth=0.75)
@@ -27,8 +39,8 @@ def getLossFig(iEpoch, iTLoss, iVLoss, iVLines ={}):
     wAx.set_ylim((0,yLim))
 
     for wX, wText in zip(wVLineXs, wVLineTexts):
-        text(wX, yLim-7, wText, color='red', rotation =67.5, size='small')
-    wAx.legend(loc='center right')
+        text(wX+1, 0.875*yLim, wText, color='red')
+    wAx.legend(loc='lower left')
     return plt
 
 

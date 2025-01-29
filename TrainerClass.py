@@ -23,7 +23,10 @@ from metrics import act_from_pred_list, threshold_list, refine_thresh_list
 from metrics import get_cntrs_list, draw_cntrs_list, draw_cntrs_exp_list, find_cent_list, draw_cent_on_im_list
 from metrics import TF_Metrics_from_batch, Metrics_from_TF_batch
 from shutil import rmtree
-from imageUtils import getLossFig
+from imageUtils import getLossFig, getPlotFromDict
+
+import multiprocessing as mp
+from dataLoad import getImageFromDataObj
 
 from models import removeClassificationLayers, addTransferLearnLayersV3
 
@@ -45,8 +48,47 @@ class ModelTrainer:
         self.setLoadFlag(False)
         self.setLoadEpoch(None)
         self.initCkptData()
+        self.mDebugDict={}
+        self.mNewEpoch={'train':True, 'val':True}
+        self.mEpochDebugDict={}
         #self.setDecoderResolutionsDict()
         
+    def setNewEpochTrainVal(self, iBool): 
+        self.setNewEpoch(iBool=iBool, iTrain=True)
+        self.setNewEpoch(iBool=iBool, iTrain=False)
+            
+    def setNewEpoch(self, iBool, iTrain):
+        if iTrain:
+            wKey ='train'
+        else:
+            wKey='val'
+        self.mNewEpoch[wKey]=iBool
+    
+    def getNewEpoch(self, iTrain):
+        if iTrain:
+            wKey ='train'
+        else:
+            wKey='val'
+        return self.mNewEpoch[wKey]
+        
+    
+    def setDebug(self, iDebug=False):
+        self.mDebug=iDebug
+        
+    def getDebug(self):
+        return self.mDebug
+        
+    def getDebugDict(self):
+        return self.mDebugDict
+    
+    def getDebugPlot(self):
+        return getPlotFromDict(self.getDebugDict())
+    
+    def saveDebugPlot(self):
+        wPlt= self.getDebugPlot()
+        wPlt.savefig(os.path.join(self.getSaveDir(), 'debug.png'))
+        wPlt.close()
+
     def initCkptData(self):
         self.mMinValCkpt = Checkpoint(model = self.getModel(), optimizer= self.getOptimizer())
         self.mLastNCkpt = Checkpoint(model = self.getModel(), optimizer= self.getOptimizer())
@@ -417,8 +459,9 @@ class ModelTrainer:
         return self.getBatchGen()(wData, self.getBatchSize(), wSeed)
         # print("wMapLists dims: (%s,%s,%s,%s)"%(len(wData[1]), len(wData[1][0]), len(wData[1][0][0]), len(wData[1][0][0][0])))
         # return self.getBatchGen()(wData[0], self.getBatchSize(), wSeed), self.getBatchGen()(wData[1], self.getBatchSize(), wSeed)
-
+    
     def computeLosses(self, iXData, iMapLists, iTrain):
+        wTinit = time.perf_counter()
         wLossList = [tf.constant(0.) for i in range(self.getNLvls())]
         wLossUpdateList = [tf.constant(0.) for i in range(self.getNLvls())]
         self.resetLoss(iLossList = wLossList, iLossUpdateList = wLossUpdateList)     
@@ -427,19 +470,33 @@ class ModelTrainer:
         self.resetAugActs()
         
         self.resetVectors()
-         
+        wT0 = time.perf_counter() 
+        if self.getDebug(): self.getEpochDebugDict(iTrain)['init']+=wT0-wTinit
         wAugments = self.getAugments(iTrain)
         wTemp = copyTemp(wAugments)
         wXDataAug = augmentXData(iXData, wAugments)
         wNorm = self.getNorm()
         if wNorm:
             wXDataAug = normListBy(wXDataAug, wNorm)
+        wT1 = time.perf_counter()     
         
+        if self.getDebug(): self.getEpochDebugDict(iTrain)['augment']+=wT1-wT0
+        
+                
         wXDataAug = self.processImages(wXDataAug)
+        wT2 = time.perf_counter()  
+        
+        if self.getDebug(): self.getEpochDebugDict(iTrain)['process']+=wT2-wT1
         
         iPredList = self.mModel(wXDataAug, training= iTrain)
+        wT3 = time.perf_counter()  
+        
+        if self.getDebug(): self.getEpochDebugDict(iTrain)['predict']+=wT3-wT2
         
         self.processMaps(iPredList, iMapLists, wTemp)
+        
+        wT4 = time.perf_counter()  
+        if self.getDebug(): self.getEpochDebugDict(iTrain)['map']+=wT4-wT3
         
         self.computeVectors(iPredList)        
         
@@ -453,6 +510,9 @@ class ModelTrainer:
         if 'Pix' in wLossKeys:
             self.computePix(iPredList)
             
+        wT5 = time.perf_counter()  
+        if self.getDebug(): self.getEpochDebugDict(iTrain)['loss']+=wT5-wT4
+        
         wBatchCounter = self.getBatchCounter()
         wEpoch = self.getEpoch()
         
@@ -489,9 +549,28 @@ class ModelTrainer:
             ioTrainableWeights.extend(wLayer.trainable_weights)
 
         return ioTrainableWeights
+    
+    def resetEpochTimers(self, iTrain):
+        if iTrain:
+            wKey = 'train'
+        else:
+            wKey = 'val'
+        self.mEpochDebugDict.update({wKey:{'image': 0., 'label':0., 'init':0., 'augment':0., 'process': 0., 'predict': 0., 'map':0., 'loss':0., 'grad': 0.}})
         
+    def getEpochDebugDict(self, iTrain):
+        if iTrain:
+            wKey = 'train'
+        else:
+            wKey = 'val'
+        return self.mEpochDebugDict[wKey]
+    
+    def initNewEpoch(self, iTrain):
+        if self.getNewEpoch(iTrain):
+            self.resetEpochTimers(iTrain)
+            self.setNewEpoch(False, iTrain)
+    
     def trainEpoch(self, iTrain = True):
-
+        self.initNewEpoch(iTrain)
         wBatchLossTracker = []
         self.resetBatchCounter()
         # wBatchGenImages, wBatchGenMapLists = self.batchGenerator(iTrain)
@@ -500,8 +579,15 @@ class ModelTrainer:
         #     wMapLists = wBatch[1]#getMapListsFromBatch(wBatch)
 
         for wBatch in self.batchGenerator(iTrain):
+            wT0 = time.perf_counter()
             wXData = getImageListFromBatch(wBatch)
+            wT1 = time.perf_counter()
+            if self.getDebug(): self.getEpochDebugDict(iTrain)['image']+=wT1-wT0
+            
+            # wXData = wPool.map(getImageFromDataObj, wBatch)
             wMapLists = getMapListsFromBatch(wBatch)
+            wT2 = time.perf_counter()
+            if self.getDebug(): self.getEpochDebugDict(iTrain)['label']+=wT2-wT1
             
             # print(len(wXData))  
             # print("wMapLists dims: (%s,%s,%s,%s)"%(len(wMapLists), len(wMapLists[0]), len(wMapLists[0][0]), len(wMapLists[0][0][0])))
@@ -509,16 +595,19 @@ class ModelTrainer:
     
                 with tf.GradientTape() as tape:
                     self.computeLosses(wXData, wMapLists, iTrain)
-               
+                wT3 = time.perf_counter()
                 wLossList, wLossUpdateList = self.getLoss()
                 wTrainableWeights = self.getTrainableWeights(self.getModel().layers, [])
                 grads = tape.gradient(wLossUpdateList, wTrainableWeights)
                 self.mOptimizer.apply_gradients((grad, var) for (grad, var) in zip(grads, wTrainableWeights) if grad is not None)
+                wT4 = time.perf_counter()
      
             else:
                 self.computeLosses(wXData, wMapLists, iTrain)
+                wT3 = time.perf_counter()
                 wLossList, _ = self.getLoss()
-
+                wT4 = time.perf_counter()
+            if self.getDebug(): self.getEpochDebugDict(iTrain)['grad']+=wT4-wT3
             wBatchLossTracker.append(np.sum(wLossList))
             self.incrementBatchCounter()
         
@@ -566,38 +655,58 @@ class ModelTrainer:
             
         self.setMinValSaveLastN(iSaveLastN)
         wLastN = self.getMinValSaveLastN()
-
+        if self.getDebug():
+            wDebug = self.getDebugDict()
+            wDebug.update({'checks':[],'train':[], 'val':[], 'saves':[], 'tot':[]})
         for i in range(wStart, wEnd):
-            wTs = time.perf_counter()
+            self.setNewEpochTrainVal(True)
+            if self.getDebug(): wT0 = time.perf_counter()   
             self.setEpoch(i)
             self.checkBatchSizeSchedule()
             self.checkLRSched()
             self.checkLossLvlSchedule()
             self.checkLayerStates()
+            if self.getDebug(): wT1 = time.perf_counter()
             self.trainEpoch(True)
+            if self.getDebug(): print("train: "+", ".join([f"{wKey}: {self.getEpochDebugDict(True)[wKey]:.2f}" for wKey in self.getEpochDebugDict(True)]))
             self.updateLossTracker(True)
             wTrainLossPerEpoch = self.getLossPerEpoch()
             self.checkTrainLoss(wTrainLossPerEpoch)
-            
+            if self.getDebug(): wT2 = time.perf_counter()
             self.trainEpoch(False)
+            if self.getDebug(): print("val: "+", ".join([f"{wKey}: {self.getEpochDebugDict(False)[wKey]:.2f}" for wKey in self.getEpochDebugDict(False)]))
+
             self.updateLossTracker(False)
             wValidLossPerEpoch = self.getLossPerEpoch()
             self.checkValLoss(wValidLossPerEpoch)
-
+            if self.getDebug(): wT3 = time.perf_counter()
+            
             self.addRemoveSavedModels(wLastN, wValidLossPerEpoch)
             
             if self.logCondition() or (self.getLoadFlag() and self.getEpoch()-self.getLoadEpoch() == 1):
                 self.plotLosses()
 
             B.set_value(self.mOptimizer.iterations, i)
-            print('ep:', self.getEpoch(), 'tr L:', np.round(wTrainLossPerEpoch,3), 'val L:', np.round(wValidLossPerEpoch,3), 'min_V:', np.round(self.getMinValLoss(), 3), 'dt:', np.round(time.perf_counter()-wTs,2))
+            print('ep:', self.getEpoch(), 'tr L:', np.round(wTrainLossPerEpoch,3), 'val L:', np.round(wValidLossPerEpoch,3), 'min_V:', np.round(self.getMinValLoss(), 3))
+            
             wLine = "{},{:.2f},{:.2f},{:.2f}\n".format(self.getEpoch(),np.round(wTrainLossPerEpoch,3), np.round(wValidLossPerEpoch,3), np.round(self.getMinValLoss(), 3))
             
             self.saveEveryN()
             self.logEveryN(wLine)
             if self.checkBreak():
-                break 
-    
+                break
+            if self.getDebug():
+                wT4 = time.perf_counter()
+                print('checks: {:.2f}, train: {:.2f} , val: {:.2f}, saves: {:.2f}, tot: {:.2f}\n'
+                      .format(wT1-wT0, wT2-wT1, wT3-wT2, wT4-wT3, wT4-wT0))
+                wDebug['checks'].append(wT1-wT0)
+                wDebug['train'].append(wT2-wT1)
+                wDebug['val'].append(wT3-wT2)
+                wDebug['saves'].append(wT4-wT3)
+                wDebug['tot'].append(wT4-wT0)
+                self.saveDebugPlot()
+            
+            
     def plotLosses(self):
         wPlt = self.getLossPlots()
         if not self.getFromShell():
@@ -1404,11 +1513,12 @@ class ModelEvaluator(ModelTrainer):
         self.loadSchedules(wSchedDict)
         
         
-    def showPlots(self, iXData, iPredList, iIdx):
+    def showPlots(self, iXData, iIdx):
         if self.getShowPlots():
             show_batch(list(iXData))
             show_batch(flat_map_list_v2(self.getAugMaps(iIdx)))
             show_batch(flat_map_list_v2(self.getAugActs(iIdx)))
+            show_batch(self.getPreds(iIdx))
             show_batch(self.getThreshPreds(iIdx))
             
     
@@ -1507,6 +1617,7 @@ class ModelEvaluator(ModelTrainer):
             self.resetAugActs()
             self.resetFlatMaps()
             self.resetFlatActs()
+            self.resetPreds()
             self.resetThreshPreds()
             self.resetPredActs()
             self.resetPredCents()
@@ -1520,7 +1631,7 @@ class ModelEvaluator(ModelTrainer):
             self.computeMetricsBatch(iIdx=iResIdx, iFlag=iType)
             self.updateMetricsLists(iResIdx)
             self.updateNames(wXNames)
-            self.showPlots(wXData, wPredList, iResIdx)
+            self.showPlots(wXData, iResIdx)
             self.savePlots(iResIdx)
             
         """
@@ -1748,6 +1859,7 @@ class ModelEvaluator(ModelTrainer):
         
     def thresholdPreds(self, iPredList, iIdx, iThresh):
         wPredListIdx = list(iPredList[iIdx][...,0].numpy()[...,None])
+        self.updatePreds(iIdx, wPredListIdx)
         wThreshPreds = threshold_list(wPredListIdx.copy(), iThresh, 1.0)        
         wThreshPreds = refine_thresh_list(wPredListIdx.copy(), wThreshPreds.copy())
         self.updateThreshPreds(iIdx, wThreshPreds)
@@ -1762,9 +1874,7 @@ class ModelEvaluator(ModelTrainer):
         wPredCents = draw_cent_on_im_list(centers_on_im_list1, None, self.getThreshPreds(iIdx)[0].shape)
         self.updatePredCents(iIdx, wPredCents)
 
-        
-    
-        
+
     def resetPredActs(self, iPredActsLists = None):
         
         if iPredActsLists is None:
@@ -1809,6 +1919,21 @@ class ModelEvaluator(ModelTrainer):
 
     def getThreshPreds(self, iIdx):
         return self.mThreshPredsLists[iIdx]
+    
+    def resetPreds(self, iPredsLists = None):
+        
+        if iPredsLists is None:
+            wPredsLists = [None]*self.getNLvls()
+        else:
+            wPredsLists = iPredsLists
+        
+        self.mPredsLists = wPredsLists
+    
+    def updatePreds(self, iIdx, iPreds):
+        self.mPredsLists[iIdx] = iPreds   
+
+    def getPreds(self, iIdx):
+        return self.mPredsLists[iIdx]
     
     def computeMetricsBatch(self, iIdx, iFlag = 'maps'):
         self.resetTFMetricsBatch()
