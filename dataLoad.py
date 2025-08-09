@@ -6,10 +6,12 @@ import json
 import random
 from imageUtils import Original_image, Original_weed, CombinedWeed
 import matplotlib.pyplot as plt
-from imgaug.augmentables.heatmaps import HeatmapsOnImage
+np.bool =bool
+# from imgaug.augmentables.heatmaps import HeatmapsOnImage
 from RandomSampler import RandSampler
 from copy import deepcopy
 from timeit import time
+import random
 
 def makeNewDir(iSaveDir, iIdx=0, iSuffix='_test_'):
     wSaveDir = iSaveDir + iSuffix + adjust_number(iIdx, 2)
@@ -78,11 +80,11 @@ def save_original_image_names(save_dir, XY_data, subset_name, label ='1'): #just
             fwriting.write_file(XY.name)
             
 def getMapListsFromBatch(iBatch):
-    mapBatch = []
-    for wDataObj in iBatch:
-        mapBatch.append(wDataObj.getMapList())  
-    return np.array(mapBatch, dtype = object).T.tolist()
-    # return mapBatch
+    return np.array([wDataObj.getMapList() for wDataObj in iBatch], dtype = object).T.tolist()
+    # mapBatch = []
+    # for wDataObj in iBatch:
+    #     mapBatch.append(wDataObj.getMapList())  
+    # return np.array(mapBatch, dtype = object).T.tolist()
 
 def getNameListFromBatch(iBatch):
     oNameBatch = []
@@ -274,7 +276,7 @@ def loadDataFileAsObject(iSrcSamplePath):
 
 import multiprocessing as mp
 
-def loadDataFilesAsObjectsMP(iSrcPath):
+def loadDataFilesAsObjectsMP(iSrcPath, iProcesses=4):
 
     j=0
     wSrcDirList = os.listdir(iSrcPath)
@@ -282,11 +284,11 @@ def loadDataFilesAsObjectsMP(iSrcPath):
     wDataPathList =  [os.path.join(iSrcPath,wFolder) for wFolder in wSrcDirList if os.path.isdir(os.path.join(iSrcPath,wFolder))]
     wLen=len(wDataPathList)
     wStrLen=len(str(wLen))
-    wPool = mp.dummy.Pool(processes=mp.cpu_count())
+    wPool = mp.Pool(processes=iProcesses)
     
     oDataObjectList= wPool.map(loadDataFileAsObject, wDataPathList)
     wTEnd=time.perf_counter()
-    print(f"\nTotal Elapsed Load Time: {wTEnd-wTStart:.2e}")
+    print(f"Total Elapsed Load Time: {wTEnd-wTStart:.2f}\n")
     return oDataObjectList
     
                      
@@ -318,7 +320,7 @@ class LoadedDataObject:
         return self.mLoadDir
 
 class RandomWeedBatchGenerator:
-    def __init__(self, iBatchSize, iWeedData, iDimGridList, iGrassList, iWeedSampleSize, iSamplerSeed, iColorTrans=True, iBlend=True):
+    def __init__(self, iBatchSize, iWeedData, iDimGridList, iGrassList, iWeedSampleSize, iSamplerSeed, iColorTrans=True, iBlend=True, iExtClrSrcList = [None]):
         self.mBatchSize = iBatchSize
         self.mWeedData = iWeedData
         self.mWeedData.setDimGridList(iDimGridList)        
@@ -329,6 +331,8 @@ class RandomWeedBatchGenerator:
         self.mColorTrans = iColorTrans
         self.mBlend=iBlend
         self.mCounter = 0
+        self.mExtClrSrcList = iExtClrSrcList
+        
     
     def reseedAllRandomSamplers(self, iSamplerSeed):
         self.mWeedData.setAllRandomSamplers(self.mSampleSize, iSamplerSeed)
@@ -343,12 +347,15 @@ class RandomWeedBatchGenerator:
         self.mMinRatio = iMinRatio
         self.mBuffer = iBuffer
         
+        
     def __next__(self):
         wNameRand, wImRand, wMaskRand, wCenterRand, wMapRandList, wGridCenterRandList, wGrassRand = self.mWeedData.getAllRandomSamplers()
         self.mNameBatch = [] #for debugging
         self.mImBatch = []
         self.mMaskBatch = [] #for debugging
         self.mMapListBatch = []
+        wExtClrList = self.mExtClrSrcList
+        wExtClrListLen = len(wExtClrList)
         
         for i in range(self.getBatchSize()):
             wSuccessFlag = False
@@ -367,8 +374,11 @@ class RandomWeedBatchGenerator:
                     grid_center_list.append(next(wGridCenterRandj))
                 grass = next(wGrassRand)
                 wCombinedWeeds = CombinedWeed(names, images, masks, centers, map_list, grid_center_list, grass[0])
-                wCombinedWeeds.transferColors(self.mColorTrans)
                 wCombinedWeeds.setSeed(i + self.mCounter)
+                random.seed(i+self.mCounter)
+                wColorIdx = random.randint(0,wExtClrListLen-1)
+                wCombinedWeeds.setExternalColorSource(wExtClrList[wColorIdx])
+                wCombinedWeeds.transferColors(self.mColorTrans)
                 wCombinedWeeds.setRotFlipRanges()
                 wCombinedWeeds.rotateFlipWeeds()
                 wCombinedWeeds.setMinMaxTransPercent(self.mMinMaxTransPrecent[0], self.mMinMaxTransPrecent[1])
@@ -726,11 +736,12 @@ def flat_map_list_v2(map_list, inv = 0):
     return flat_list
 
 def weight_list_3D(map_list, lo_val = 0.0):
-    weight_list = []
-    for mapi in map_list:
-        weight_map=  (1.-lo_val)*(1-mapi) + lo_val #scale so that black cell weights of inverse map are not zero
-        weight_list.append(weight_map)
-    return weight_list
+    return [(1.-lo_val)*(1-mapi) + lo_val for mapi in map_list]
+    # weight_list = []
+    # for mapi in map_list:
+    #     weight_map=  (1.-lo_val)*(1-mapi) + lo_val #scale so that black cell weights of inverse map are not zero
+    #     weight_list.append(weight_map)
+    # return weight_list
 
 def scale_map(im_map):
     max_map = np.max(im_map, axis = (0,1), keepdims=True) #get maximum of each channel
@@ -740,11 +751,12 @@ def scale_map(im_map):
     return im_map
 
 def scale_map_list_3D(map_list):
-    scaled_map_list = []
-    for mapi in map_list:
-        scaled = scale_map(mapi)
-        scaled_map_list.append(scaled)
-    return scaled_map_list
+    return [scale_map(mapi) for mapi in map_list]
+    # scaled_map_list = []
+    # for mapi in map_list:
+    #     scaled = scale_map(mapi)
+    #     scaled_map_list.append(scaled)
+    # return scaled_map_list
 
 def map_list_from_batch(batch, dim, dim_grid):
     map_list = []
@@ -753,17 +765,19 @@ def map_list_from_batch(batch, dim, dim_grid):
         map_list.append(oim.get_comp_map_3d())
     return map_list
 
-def map2heatmap_list(map_list, dim):
-    heatmap_list = []
-    for mapi in map_list:
-        heatmap_list.append(HeatmapsOnImage(mapi, dim))
-    return heatmap_list
+# def map2heatmap_list(map_list, dim):
+#     return [HeatmapsOnImage(mapi, dim) for mapi in map_list]
+    # heatmap_list = []
+    # for mapi in map_list:
+    #     heatmap_list.append(HeatmapsOnImage(mapi, dim))
+    # return heatmap_list
 
 def heatmap2map_list(heatmap_list):
-    map_list = []
-    for heatmap in heatmap_list:
-        map_list.append(heatmap.get_arr())
-    return map_list
+    return [heatmap.get_arr() for heatmap in heatmap_list]
+    # map_list = []
+    # for heatmap in heatmap_list:
+    #     map_list.append(heatmap.get_arr())
+    # return map_list
 
 def process_batch(batch, dim, dim_grid, seq = None, lo_val = 0.1):
     map_list = map_list_from_batch(batch, dim, dim_grid)

@@ -27,7 +27,11 @@ def getLossFig(iEpoch, iTLoss, iVLoss, iVLines ={}):
     wEpochs = np.arange(0,iEpoch+1)
     wFig = plt.figure()
     wAx = wFig.subplots()
+    if len(wEpochs) > len(iTLoss):
+        wEpochs = wEpochs[:-1]
     wAx.plot(wEpochs, iTLoss, label='train')
+    if len(wEpochs) > len(iVLoss):
+        wEpochs = wEpochs[:-1]
     wAx.plot(wEpochs, iVLoss, label='valid')
     
     wVLineXs = [int(wKey) for wKey in iVLines if int(wKey) <= iEpoch]
@@ -193,6 +197,14 @@ class CombinedWeed():
         self.no_weeds = len(im_list)
         self.random = np.random
 
+            
+    def setExternalColorSource(self, external_color_source = None):
+        if external_color_source is not None:
+            self.external_color_source = external_color_source.copy()
+        else:
+            self.external_color_source = external_color_source
+        
+
     def setSeed(self, iSeed = None):
         self.seed = iSeed
         self.random.seed(self.seed)        
@@ -214,12 +226,19 @@ class CombinedWeed():
     
     def transferColors(self, flag = True):
         if flag:
-            srcIm = self.grass
+            if self.external_color_source is None:
+                srcIm = self.grass
+            else:
+                srcIm = self.external_color_source
+                self.grass = transfer_lhm(self.grass[...,::-1].astype(np.float32), srcIm[...,::-1].astype(np.float32))[...,::-1].astype(np.uint8)
+            
             tarImList = self.im_list
             self.colouredWeeds = []
+            
             for tarIm in tarImList:
-                lhm = transfer_lhm(tarIm[...,::-1].astype(np.float32),srcIm[...,::-1].astype(np.float32))[...,::-1].astype(np.uint8)
+                lhm = transfer_lhm(tarIm[...,::-1].astype(np.float32), srcIm[...,::-1].astype(np.float32))[...,::-1].astype(np.uint8)
                 self.colouredWeeds.append(lhm)
+
         else:
             self.colouredWeeds = self.getImages()
     

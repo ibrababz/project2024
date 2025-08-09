@@ -6,11 +6,12 @@ Created on Fri Feb 16 16:25:43 2024
 """
 #%%
 import os
+import sys
 import file
 import cv2 as cv
 from helper import show_wait
 #from imageUtils import CombinedWeed
-from dataLoad import GenerateWeedDataList, WeedDataLoader, RandomWeedBatchGenerator, makeNewDirV2#, loadDataFilesAsObjects
+from dataLoad import GenerateWeedDataList, WeedDataLoader, RandomWeedBatchGenerator, makeNewDirV2, loadDataFilesAsObjects
 from sklearn.model_selection import train_test_split
 from dataLoad import genDataFiles
 import argparse
@@ -52,6 +53,9 @@ def getArguments():
     parser.add_argument('-g', '--mGrassPath', nargs='+', default=[os.path.join(*[gDefaultDataDir, "data2019", "0","train1_0_grass"])],
                         help='Full path grass image folder')
     
+    parser.add_argument('-ex', '--mExtClrSrcPath', nargs='+',
+                        help='Use another directory for color transfer')
+    
     parser.add_argument('-n', '--mWeedSamples', default=4, type=int, 
                         help='Max number of weeds to sample per synthetic image')
     
@@ -67,7 +71,7 @@ def getArguments():
     parser.add_argument('-r', '--mNMaps', default=3, type=int, 
                         help='Number of output map resolutions to generate')
     
-    parser.add_argument('-p', '--mValidFraction', default=0.3, type=float, 
+    parser.add_argument('-vf', '--mValidFraction', default=0.3, type=float, 
                         help='Fraction between 0 and 1 of source images to use for validation set generation')
     
     parser.add_argument('-b', '--mBlend', default=1, type=int, 
@@ -123,7 +127,7 @@ if __name__ == '__main__':
         
     src_path3 = wArgs.mGrassPath
     
-    
+    src_path_ext_clr = wArgs.mExtClrSrcPath
     
     
     wColorTrans = bool(wArgs.mColorTrans)
@@ -139,38 +143,22 @@ if __name__ == '__main__':
     if not ValidLenPercent or not validSize:
         ValidLenPercent, validSize = 0., 0   
     #%%
-    # src_folder = os.path.join(*["data2019", "1", "train1_contrast_masks_clean"])
-    # src_dir = os.path.join(ROOT_DIR, src_folder)
-    
-    # src_folder2 = os.path.join(*["data2019", "1", "train1"])
-    # src_dir2 = os.path.join(ROOT_DIR, src_folder2)
-    
-    # pts_file = 'mask_centers.json'
-    # pts_path = os.path.join(src_folder, pts_file)
-    
-    # src_folder3 = os.path.join(*["data2019", "0","train1_0_grass"])
-    # src_path3 = os.path.join(ROOT_DIR, src_folder3)
-    
-    # Wo, Ho = 640, 480
-    # W, H = 640, 480 #224, 224
-    # dim = (W,H)
-    
-    # dstDim = (224, 224) #(448,448)
-    
-    # W_grid1, H_grid1 = 7, 7 #14, 14
-    # dim_grid1 = (W_grid1, H_grid1)
-    # W_grid2, H_grid2 = 14, 14 #28, 28
-    # dim_grid2 = (W_grid2, H_grid2)
-    # # W_grid3, H_grid3 = 28, 28
-    # # dim_grid3 = (W_grid3, H_grid3)
-    # dim_grid_list = [dim_grid1, dim_grid2]#, dim_grid3]
-    
-    # scale_x, scale_y = W/Wo, H/Ho
-    
+
     weed_list = GenerateWeedDataList(src_dir, src_dir2, pts_file, scale_x, scale_y)
     grass_list = []
     for wPath in src_path3:
         grass_list+=[cv.resize(cv.imread(os.path.join(wPath,x)), dim, interpolation = cv.INTER_AREA) for x in  os.listdir(wPath)]
+    
+    ext_clr_src_list = []
+    if src_path_ext_clr is not None:
+        for path in src_path_ext_clr:    
+            file_name_list = os.listdir(path)
+            ext_clr_src_list += [cv.imread(os.path.join(path, name)) for name in file_name_list]
+    else:
+        ext_clr_src_list = [None]
+
+        
+        
     print("\nGenerating synthetic weed-on-grass images from %s weeds and %s grass samples"%(len(weed_list), len(grass_list)))
 
     # ValidLenPercent = 0.30
@@ -194,7 +182,7 @@ if __name__ == '__main__':
     # validSize = 900
     if ValidLenPercent and validSize:
         ValidData = WeedDataLoader(weed_valid, dim)
-        ValidBatchGen = RandomWeedBatchGenerator(batchSize, ValidData, dim_grid_list, grass_valid, weedSampleSize, samplerSeed, wColorTrans, wBlend)
+        ValidBatchGen = RandomWeedBatchGenerator(batchSize, ValidData, dim_grid_list, grass_valid, weedSampleSize, samplerSeed, wColorTrans, wBlend, ext_clr_src_list)
         ValidBatchGen.setBatchDim(dstDim)
         ValidBatchGen.setTranLimits((1/5, 1/2), 0.5, 15)
         ValidBatchGen.setNoRepeat(False)
@@ -203,19 +191,23 @@ if __name__ == '__main__':
     #%%
     # trainSize = 3000
     TrainData = WeedDataLoader(weed_train, dim)
-    TrainBatchGen = RandomWeedBatchGenerator(batchSize, TrainData, dim_grid_list, grass_train, weedSampleSize, samplerSeed, wColorTrans, wBlend)
+    TrainBatchGen = RandomWeedBatchGenerator(batchSize, TrainData, dim_grid_list, grass_train, weedSampleSize, samplerSeed, wColorTrans, wBlend, ext_clr_src_list)
     TrainBatchGen.setBatchDim(dstDim)
     TrainBatchGen.setTranLimits((1/5, 1/2), 0.5, 15)
     TrainBatchGen.setNoRepeat(False)
     TrainBatchGen.setSize(trainSize)
     
     #%%
+    if src_path_ext_clr is not None:
+        wExternal=True
+    else:
+        wExternal=False
+        
+    iDestFolder = "{}_dim_{}_sample_{}_frac_{:.0e}_res_{}_blend_{}_clr_{}_ext_{}".format(trainSize, dstDim[0], weedSampleSize, 
+                                                                                  1-ValidLenPercent, wNMaps, wBlend, wColorTrans, wExternal)
     
-    iDestFolder = "{}_dim_{}_sample_{}_frac_{:.0e}_res_{}_blend_{}_clr_{}".format(trainSize, dstDim[0], weedSampleSize, 
-                                                                                  1-ValidLenPercent, wNMaps, wBlend, wColorTrans)
-    
-    iValDestFolder = "{}_dim_{}_sample_{}_frac_{:.0e}_res_{}_blend_{}_clr_{}".format(validSize, dstDim[0], weedSampleSize, 
-                                                                                  ValidLenPercent, wNMaps, wBlend, wColorTrans)    
+    iValDestFolder = "{}_dim_{}_sample_{}_frac_{:.0e}_res_{}_blend_{}_clr_{}_ext_{}".format(validSize, dstDim[0], weedSampleSize, 
+                                                                                  ValidLenPercent, wNMaps, wBlend, wColorTrans, wExternal)    
     if not wUintFlag:
         iDestFolder +='_float'  
         iValDestFolder +='_float'  
@@ -228,11 +220,14 @@ if __name__ == '__main__':
     if ValidLenPercent and validSize:
         iValidDestPath = makeNewDirV2(wOutputDirPath, iValDestFolder, 'val', 0)
     
-    #%%
+    # %%
     genDataFiles(TrainBatchGen, iDestPath, iUintFlag=wUintFlag)
     wScriptName=os.path.splitext(os.path.basename(__file__))[0]    
     wArgLogName=wScriptName +'_args.csv'
     logArgs(wArgs, iDestPath, wArgLogName)
+    with open(os.path.join(iDestPath, wArgLogName), 'a') as wFile:
+        wFile.write('\n\n'+' '.join(sys.argv))
+        
     print('\nSaved argument Log to: %s'%wArgLogName)    
     if ValidLenPercent and validSize:
         genDataFiles(ValidBatchGen, iValidDestPath, iUintFlag =wUintFlag)

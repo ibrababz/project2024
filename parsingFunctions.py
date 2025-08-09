@@ -13,6 +13,16 @@ def decodeParserSched(iList, iEpKey=int, iValKey= int):
         oValList.append(iValKey(iList[2*i+1]))
     return oEpList, oValList
 
+def decodeParserSchedAsDict(iList, iEpKey=int, iValKey= int):
+    if len(iList)%2 !=0:
+        raise ValueError("List must be even in length")
+    return {iEpKey(iList[2*i]): iValKey(iList[2*i+1]) for i in range(len(iList)//2)}
+    # oEpList, oValList = [], []
+    # for i in range(len(iList)//2):
+    #     oEpList.append(iEpKey(iList[2*i]))
+    #     oValList.append(iValKey(iList[2*i+1]))
+    # return oEpList, oValList
+
 def logArgs(iArgs, iSaveDir, iFileName='trainNewArgs.csv', iAttrMarker ='m'):
     wFilePath = os.path.join(iSaveDir, iFileName)
     with open(wFilePath, 'w') as wFile:

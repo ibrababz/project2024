@@ -88,7 +88,7 @@ def getArguments():
     parser.add_argument('-z', '--mLogFreq', default=5, type=int, 
                         help='Freq at which to log to output file')
     
-    parser.add_argument('-y', '--mWithPath', default=1, type=int, 
+    parser.add_argument('-y', '--mWithPath', default=0, type=int, 
                         help='Log data names with path 0 or 1 (t/f)')
     
     parser.add_argument('-u', '--mCkpt', default=None,
@@ -97,16 +97,16 @@ def getArguments():
     parser.add_argument('-w', '--mAugments', default=1, type=int, 
                         help='type of augment to use')
     
-    parser.add_argument('-q', '--mLossLvlSched', nargs = '+', default=[0, 0, 100, 1, 200, 2, 300, -3], type=int, 
+    parser.add_argument('-q', '--mLossLvlSched', nargs = '+', default=[0, 0, 100, 1, 200, 2, 300, -2], type=int, 
                         help='Loss level scheduling [epoch_1, losslvlflag_2, epoch_2, losslvlflag_2, etc...]')
     
     parser.add_argument('-db', '--mDebug', default=0, type=int, 
                         help='Debug 0 or 1')
     
-    parser.add_argument('-dp', '--mDeeper', default=0, type=int, 
-                        help='Plot all resolutions 1 or only active loss level 0')
+    parser.add_argument('-dp', '--mDeeper', default=1, type=int, 
+                        help='Depth of model, 0,1,2 depending on models module')
     
-    parser.add_argument('-mp', '--mMPLoad', default=0, type=int, 
+    parser.add_argument('-mp', '--mMPLoad', default=1, type=int, 
                         help='Multiprocessing for dataload')
     
     return parser
@@ -120,7 +120,7 @@ if __name__ =='__main__':
     
     wArgs = getArguments().parse_args()
     wNorm = wArgs.mNorm
-    iSrcPath = wArgs.mTrainDir
+    iSrcPath = os.path.join(gParentDir, 'data2019', 'synth','test_01_tr_7000_dim_448_sample_4_frac_1e+00_res_3_blend_True_clr_True_uint')# wArgs.mTrainDir
     wRes = wArgs.mMapRes
     iValidSrcPath = wArgs.mValidDir
     wModelFlag = wArgs.mModelFlag
@@ -166,7 +166,10 @@ if __name__ =='__main__':
     wOptimizer = tf.keras.optimizers.Adam(learning_rate= wLRList[0], clipnorm=1., clipvalue=0.5) 
     
 #%%
-    wScriptName=os.path.splitext(os.path.basename(__file__))[0]
+    if gFromShell:
+        wScriptName=os.path.splitext(os.path.basename(__file__))[0]
+    else:
+        wScriptName='test'
     wSaveFolder = "{}_ep_{}-{}_lr_{:.0e}".format(wScriptName, wEpochs[0], wEpochs[1], wLRList[0])
     wSaveDir = makeNewDirV2(ROOT_DIR, wSaveFolder, wModelFlag, 0)
     os.makedirs(wSaveDir, exist_ok=True)
@@ -188,6 +191,7 @@ if __name__ =='__main__':
     
     if wCkptPath is None:
         wTrainer.getModel().trainable = False 
+        # wTrainer.freezeBackBone()
     else:
         wLoadDir = os.path.abspath(os.path.join(wCkptPath, os.pardir))
         wTrainer.setLoadDir(wLoadDir)
@@ -378,3 +382,93 @@ if __name__ =='__main__':
 #             print(wFile.split(wExt)[0])    
 # '''                
 # """
+
+
+# #%% some test stuff
+#     def wrapper(iArgs):
+#         wMapAugList, wWeightList, _ = ProcessMapList3D(*iArgs)
+#         wActList = act_list_3D(wMapAugList)
+#         return wMapAugList
+    
+#     def wrapper2(iArgs):
+#         return iArgs[0](**iArgs[1])
+
+#     def divideList(iList, iNSegments):
+#         wLen=len(iList)
+#         wStep= wLen//iNSegments
+#         wSteps= [wStep]*iNSegments
+#         wR = wLen%iNSegments
+#         # wSteps = [wSteps[i] + (i<wR) for i in range(len(wSteps))] #slightly slower than below
+#         for i in range(wR): wSteps[i]+=1
+#         wIndexes= [0] + [sum(wSteps[:i+1]) for i in range(len(wSteps))]
+#         return [iList[wIndexes[i]:wIndexes[i+1]] for i in range(iNSegments)]
+    
+        
+#     from dataLoad import getImageListFromBatch, getMapListsFromBatch
+#     from dataLoad import ProcessMapList3D
+#     from loss_functions import act_list_3D
+#     import multiprocessing as mp
+#     from timeit import time
+#     wTrainer.setEpoch(0)
+#     wTrainer.checkBatchSizeSchedule() #to instantiate batchsize
+#     wData = wTrainer.getData()[:]
+#     print("Data Size: %s\n"%len(wData))
+#     wBatch = next(iter(wTrainer.batchGenerator()))
+       
+#     wMapBatch = getMapListsFromBatch(wBatch)    
+#     wImageList = [wX.getImage() for wX in wData]
+#     wDiv = 3
+    
+#     wDict = {}
+#     for wDiv in [1, 2, 4, 8, 10, 12, 16, 32]:# [1,2,4,6,8,10]:
+#         print("\nProcesses: %s"%wDiv)
+#         print("-"*30)
+#         wTimeList=[]
+#         for i in range(2):#4):
+#             wSeq = wTrainer.getAugments()
+#             wSeq.seed_(i)
+#             wLen=len(wImageList)
+            
+#             wT0 = time.perf_counter()
+#             wSeqList = [wSeq.deepcopy() for j in range(wDiv)] 
+#             for j in range(wDiv): wSeqList[j].seed_(i*j*wLen//(wDiv))
+#             wImageListList = divideList(wImageList, wDiv)
+#             wImageArgs = [(wSeqList[j], {'images': wImageListSegment}) for j, wImageListSegment in enumerate(wImageListList)]
+#             wMapList = np.array([wX.getMapList() for wX in wData], dtype=object).T.tolist()
+
+#             wPool= mp.dummy.Pool(processes=wDiv)
+#             wAugImageList = wPool.map(wrapper2, wImageArgs)
+#             wT1 = time.perf_counter()
+#             print(f"AugmentTime: {wT1-wT0:.2f}")
+            
+#             for j, wMapListAtRes in enumerate(wMapList):
+#                 wMapListList = divideList(wMapListAtRes, wDiv)
+#                 wDimGrid = tuple(wMapListList[0][0].shape[:2])
+#                 wSeqMapList= [wSeq.deepcopy() for j in range(wDiv)]
+#                 for k in range(wDiv): wSeqMapList[k].seed_(i*k*wLen//(wDiv))
+#                 wMapArgs = [[wMapSegment, wTrainer.mDim, wDimGrid, wSeqMapList[k]] for k, wMapSegment in enumerate(wMapListList)]
+#                 wMapAugList = wPool.map(wrapper, wMapArgs)
+#                 # wArgs = [[wMapList[j], wTrainer.mDim, tuple(wMapList[j][0].shape[:2]), wSeqMap.deepcopy()] for j in range(len(wMapList))]
+#             wT2 = time.perf_counter()
+
+#             print(f"MapAugmentTime of {len(wMapList)} res: {wT2-wT1:.2f}")
+
+#             wTimeList.append(wT2-wT0)
+#         wDict.update({'%s processes'%wDiv:np.mean(wTimeList)})
+#     print(wDict)
+    
+    
+#     wProcesses = 3
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    

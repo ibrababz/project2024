@@ -584,7 +584,6 @@ class ModelTrainer:
             wT1 = time.perf_counter()
             if self.getDebug(): self.getEpochDebugDict(iTrain)['image']+=wT1-wT0
             
-            # wXData = wPool.map(getImageFromDataObj, wBatch)
             wMapLists = getMapListsFromBatch(wBatch)
             wT2 = time.perf_counter()
             if self.getDebug(): self.getEpochDebugDict(iTrain)['label']+=wT2-wT1
@@ -796,8 +795,7 @@ class ModelTrainer:
                 wLoss = wPos + wNeg
                 wLossUpdate = wLossDict['Pos']*wPos + wLossDict['Neg']*wNeg
                 self.incrementLoss(i, wLoss, wLossUpdate)
-
-                
+           
     def computeDice(self):#, iPredList):
         wLossLvl = self.getLossLvl()
         wLossDict = self.getLossDict()
@@ -1227,7 +1225,7 @@ class ModelTrainer:
             wNoToUnfreeze = iRate*wDelta         
             if wNoToUnfreeze - np.floor(wNoToUnfreeze) <= 1e-7: 
                 for i in range(int(wNoToUnfreeze)):
-                    if len(iLayerNames) != 0:
+                    if len(iLayerNames) > 0:
                         wLayersToUnfreeze.append(iLayerNames.pop(0))
                 wFreezeDict = {}
                 wFreezeDict.update(self.genLayerStateDict(wLayersToUnfreeze, [True]*len(wLayersToUnfreeze)))

@@ -28,19 +28,21 @@ from loss_functions import tensor_pos_neg_loss
 from loss_functions import act_list_3D, act_3D
 
 def threshold_list(img_list, thresh_val, max_val, flag = cv.THRESH_TOZERO):
-    thresh_list = []
-    for im in img_list:
-        _,thresh = cv.threshold(im, thresh_val, max_val, flag)
-        thresh_list.append(thresh[...,None])
-    return thresh_list
+    # thresh_list = []
+    # for im in img_list:
+    #     _,thresh = cv.threshold(im, thresh_val, max_val, flag)
+    #     thresh_list.append(thresh[...,None])
+    # return thresh_list
+    return [cv.threshold(im, thresh_val, max_val, flag)[1][...,None] for im in img_list]
 
 def get_cntrs_list(img_list, ret_flag = cv.RETR_TREE, app_flag = cv.CHAIN_APPROX_SIMPLE, thresh_flag = cv.THRESH_BINARY):
-    cntrs_list = []
-    for im in img_list:
-        _,thresh = cv.threshold(im, 0.01, 1., thresh_flag)
-        contours, hierarchy = cv.findContours(np.uint8(thresh), ret_flag, app_flag)
-        cntrs_list.append(contours)
-    return cntrs_list
+    # cntrs_list = []
+    # for im in img_list:
+    #     _,thresh = cv.threshold(im, 0.01, 1., thresh_flag)
+    #     contours, hierarchy = cv.findContours(np.uint8(thresh), ret_flag, app_flag)
+    #     cntrs_list.append(contours)
+    # return cntrs_list
+    return [cv.findContours(np.uint8(cv.threshold(im, 0.01, 1., thresh_flag)[1]), ret_flag, app_flag)[0] for im in img_list] 
 
 def get_contours(im, ret_flag = cv.RETR_TREE, app_flag = cv.CHAIN_APPROX_SIMPLE, thresh_flag = cv.THRESH_BINARY):
         thresh = cv.threshold(im, 0.01, 1., thresh_flag)[1]
@@ -58,10 +60,11 @@ def refine_thresh(pred, thresh):
     return pred*thresh
     
 def refine_thresh_list(pred_list, thresh_list):
-    new_list = []
-    for pred, thresh in zip(pred_list, thresh_list):
-        new_list.append(refine_thresh(pred, thresh))
-    return new_list
+    # new_list = []from
+    # for pred, thresh in zip(pred_list, thresh_list):
+    #     new_list.append(refine_thresh(pred, thresh))
+    # return new_list
+    return [refine_thresh(pred, thresh) for pred, thresh in zip(pred_list, thresh_list)]
     
 def blend_pred_truth(pred, truth, alpha =0.5, beta =0.5):
     
@@ -203,12 +206,13 @@ def  draw_cntrs_exp(im, cntrs, colour = 1, thickness= -1):
     return expanded
 
 def expand_pred_list(pred_batch, pred_drawn_expanded_list):
-    pred_exp_list = []      
-    for pred, exp in zip(pred_batch, pred_drawn_expanded_list):
-        pred_exp = pred*exp
-        pred_exp_list.append(pred_exp)
+    # pred_exp_list = []      
+    # for pred, exp in zip(pred_batch, pred_drawn_expanded_list):
+    #     pred_exp = pred*exp
+    #     pred_exp_list.append(pred_exp)
  
-    return pred_exp_list
+    # return pred_exp_list
+    return [pred*exp for pred, exp in zip(pred_batch, pred_drawn_expanded_list)]
 
 def expand_pred(pred, exp):
     pred_exp = pred*exp
@@ -560,13 +564,14 @@ def find_cent_on_im(contours):
     return centers_on_image
 
 def find_cent_list(contours_on_image_list):
-    centers_on_image_list = []
+    return [find_cent_on_im(cntrs) for cntrs in contours_on_image_list]
+    # centers_on_image_list = []
 
-    for cntrs in contours_on_image_list:
-        centers_on_image = find_cent_on_im(cntrs)
-        centers_on_image_list.append(centers_on_image) 
+    # for cntrs in contours_on_image_list:
+    #     centers_on_image = find_cent_on_im(cntrs)
+    #     centers_on_image_list.append(centers_on_image) 
 
-    return centers_on_image_list
+    # return centers_on_image_list
 
 def draw_cent_on_im(im, centers_on_image, color = (1.,1.,1.)):
 

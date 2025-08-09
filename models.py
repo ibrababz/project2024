@@ -12,6 +12,8 @@ from tensorflow.keras.layers import Dense, Conv2D, MaxPool2D , Flatten, Dropout,
 from tensorflow.keras import backend as B
 from tensorflow.keras.utils import plot_model
 from tensorflow.keras.applications import ResNet50, VGG16
+from customModel import CustomModel
+from customSliceLayer import Slice
 #tf.compat.v1.disable_eager_execution()
 
 from dataLoad import file_writing
@@ -21,8 +23,51 @@ def save_model_summary(save_dir, model):
         fwriting = file_writing(file)
         model.summary(print_fn = fwriting.write_file)
         
+def makeYoloTypeFlat(iShape, iFlag = 'resnet', iRes = 2, iDeeper=0, iLegacy=True):
+    H, W, C = iShape
+    
+    if iFlag == 'resnet':
+        base_model = ResNet50(include_top=False, input_shape= iShape, pooling='None', weights='imagenet')
+        index =142
+        index2 = 80
+    elif iFlag == 'vgg':
+        base_model = VGG16(include_top=False, input_shape=iShape ,pooling='None', weights='imagenet')
+        index = 17
+        index2 = 12 #filler
         
-def makeYoloType(iShape, iFlag = 'resnet', iRes = 2, iDeeper=0):
+    base_model.trainable = False
+    
+    if iRes == 2:
+        base_model2 = tf.keras.models.Model([base_model.inputs], [base_model.output, base_model.layers[index].output], name = 'base_model2')
+        base_model2.trainable = False
+        top_model = make_top_model_v2(base_model2.output[0].shape[1:], base_model2.output[1].shape[1:])
+    elif iRes == 3:
+        # base_model2 = tf.keras.models.Model([base_model.inputs], [base_model.output, base_model.layers[index].output,  base_model.layers[index2].output], name = 'base_model2')
+        base_model2 = tf.keras.models.Model(base_model.input, (base_model.output, base_model.layers[index].output,  base_model.layers[index2].output), name = 'base_model2')
+
+        base_model2.trainable = False
+        if not iDeeper:
+            if iLegacy:
+                top_model = make_top_model_v3(base_model2.output[0].shape[1:], base_model2.output[1].shape[1:], base_model2.output[2].shape[1:])
+            else:
+                top_model = make_top_model_v3p5_flat(*base_model2.output)
+                # top_model = make_top_model_tiny_flat(*base_model2.output)
+       
+        elif iDeeper==1:
+            top_model = make_top_model_v5([base_model2.output[0].shape[1:], base_model2.output[1].shape[1:], base_model2.output[2].shape[1:]], iWithTop=True)
+        elif iDeeper==2:
+            top_model = make_top_model_v6([base_model2.output[0].shape[1:], base_model2.output[1].shape[1:], base_model2.output[2].shape[1:]], iWithTop=True)
+        elif iDeeper==-1:
+            top_model = make_top_model_v7([base_model2.output[0].shape[1:], base_model2.output[1].shape[1:], base_model2.output[2].shape[1:]], iWithTop=True)
+        elif iDeeper==-2:
+            top_model = make_top_model_v8([base_model2.output[0].shape[1:], base_model2.output[1].shape[1:], base_model2.output[2].shape[1:]], iWithTop=True)
+               
+    model = tf.keras.models.Model(base_model2.input, top_model)
+    # model = CustomModel(base_model2.inputs, top_model(base_model2.output))
+    return model
+    
+        
+def makeYoloType(iShape, iFlag = 'resnet', iRes = 2, iDeeper=0, iLegacy=True):
     H, W, C = iShape
     
     if iFlag == 'resnet':
@@ -44,13 +89,22 @@ def makeYoloType(iShape, iFlag = 'resnet', iRes = 2, iDeeper=0):
         base_model2 = tf.keras.models.Model([base_model.inputs], [base_model.output, base_model.layers[index].output,  base_model.layers[index2].output], name = 'base_model2')
         base_model2.trainable = False
         if not iDeeper:
-            top_model = make_top_model_v3(base_model2.output[0].shape[1:], base_model2.output[1].shape[1:], base_model2.output[2].shape[1:])
+            if iLegacy:
+                top_model = make_top_model_v3(base_model2.output[0].shape[1:], base_model2.output[1].shape[1:], base_model2.output[2].shape[1:])
+            else:
+                top_model = make_top_model_v3p5(base_model2.output[0].shape[1:], base_model2.output[1].shape[1:], base_model2.output[2].shape[1:])
+       
         elif iDeeper==1:
             top_model = make_top_model_v5([base_model2.output[0].shape[1:], base_model2.output[1].shape[1:], base_model2.output[2].shape[1:]], iWithTop=True)
         elif iDeeper==2:
             top_model = make_top_model_v6([base_model2.output[0].shape[1:], base_model2.output[1].shape[1:], base_model2.output[2].shape[1:]], iWithTop=True)
+        elif iDeeper==-1:
+            top_model = make_top_model_v7([base_model2.output[0].shape[1:], base_model2.output[1].shape[1:], base_model2.output[2].shape[1:]], iWithTop=True)
+        elif iDeeper==-2:
+            top_model = make_top_model_v8([base_model2.output[0].shape[1:], base_model2.output[1].shape[1:], base_model2.output[2].shape[1:]], iWithTop=True)
                
     model = tf.keras.models.Model(base_model2.inputs, top_model(base_model2.output))
+    # model = CustomModel(base_model2.inputs, top_model(base_model2.output))
     return model
 
 def make_top_model_v2(base_model_output_shape, base_model_layeri_output_shape):
@@ -177,6 +231,275 @@ def make_top_model_v3(base_model_output_shape, base_model_layeri_output_shape, b
 
 
 
+def make_top_model_v3p5(base_model_output_shape, base_model_layeri_output_shape, base_model_layeri_output_shape2):
+    #x is a tensor
+    input1 = tf.keras.Input(shape = base_model_output_shape, name = "input_to_top")
+
+    x = tf.keras.layers.Conv2D(256,(1,1), activation = 'relu', padding = "same", name='top_11')(input1)
+    x = tf.keras.layers.Dropout(0.5)(x)
+    x = tf.keras.layers.Conv2D(512,(3,3), activation = 'relu', padding = "same", name='top_12')(x)
+    x = tf.keras.layers.Dropout(0.5)(x)    
+    x = tf.keras.layers.Conv2D(256,(1,1), activation = 'relu', padding = "same", name='top_13')(x)
+    x = tf.keras.layers.Dropout(0.5)(x)
+    x = tf.keras.layers.Conv2D(256,(3,3), activation = 'relu', padding = "same", name='top_14')(x)
+    x = tf.keras.layers.Dropout(0.5)(x)
+    x = tf.keras.layers.Conv2D(128,(1,1), activation = 'relu', padding = "same", name='top_15')(x)
+    x = tf.keras.layers.Dropout(0.5)(x)
+    
+   
+    xup = x
+    x = tf.keras.layers.Conv2D(2,(1,1), padding = "same", name='top_out_1')(x)#, kernel_regularizer=tf.keras.regularizers.l2(1e-6), kernel_constraint=tf.keras.constraints.min_max_norm(min_value=1e-30, max_value=1.0))(x)
+    # x = tf.keras.layers.Softmax(axis = -1)(x)[...,0, None]
+    x = tf.keras.layers.Softmax(axis = -1, name='softmax_1')(x)
+    x = Slice(name='slice_1')(x)
+    
+    input_from_layeri = tf.keras.Input(shape=base_model_layeri_output_shape, name = 'input_from_base_layeri')
+    x_reduce_dim = tf.keras.layers.Conv2D(256,(1,1), activation = 'relu', padding = "same", name='top_red_dim_1')(input_from_layeri)
+    x_reduce_dim = tf.keras.layers.Dropout(0.5)(x_reduce_dim)
+
+    
+    x1 = tf.keras.layers.UpSampling2D(size = (2,2), name = 'top_20')(xup)
+    x1 = tf.keras.layers.concatenate([x1,x_reduce_dim],axis = 3)
+    
+
+    x1 = tf.keras.layers.Conv2D(128,(1,1), activation = 'relu', padding = "same", name='top_21')(x1)
+    x1 = tf.keras.layers.Dropout(0.5)(x1)
+    x1 = tf.keras.layers.Conv2D(256,(3,3), activation = 'relu', padding = "same", name='top_22')(x1)
+    x1 = tf.keras.layers.Dropout(0.5)(x1)
+    x1 = tf.keras.layers.Conv2D(256,(1,1), activation = 'relu', padding = "same", name='top_23')(x1)
+    x1 = tf.keras.layers.Dropout(0.5)(x1)
+    x1 = tf.keras.layers.Conv2D(512,(3,3), activation = 'relu', padding = "same", name='top_24')(x1)
+    x1 = tf.keras.layers.Dropout(0.5)(x1)
+    x1 = tf.keras.layers.Conv2D(256,(1,1), activation = 'relu', padding = "same", name='top_25')(x1)
+    x1 = tf.keras.layers.Dropout(0.5)(x1)
+    x1 = tf.keras.layers.Conv2D(256,(3,3), activation = 'relu', padding = "same", name='top_26')(x1)
+    x1 = tf.keras.layers.Dropout(0.5)(x1)
+    x1 = tf.keras.layers.Conv2D(128,(1,1), activation = 'relu', padding = "same", name='top_27')(x1)
+    x1 = tf.keras.layers.Dropout(0.5)(x1)
+    
+    xup = x1
+
+    
+    x1 = tf.keras.layers.Conv2D(2,(1,1), padding = "same", name='top_out_2')(x1)#, kernel_regularizer=tf.keras.regularizers.l2(1e-6), kernel_constraint=tf.keras.constraints.min_max_norm(min_value=1e-30, max_value=1.0))(x1)
+    # x1 = tf.keras.layers.Softmax(axis = -1)(x1)[...,0,None]
+    x1 = tf.keras.layers.Softmax(axis = -1, name='softmax_2')(x1)
+    x1 = Slice(name='slice_2')(x1)
+    
+    
+    input_from_layeri2 = tf.keras.Input(shape = base_model_layeri_output_shape2, name = 'input_from_base_layeri2')
+    x_reduce_dim = tf.keras.layers.Conv2D(256,(1,1), activation = 'relu', padding = "same", name='top_red_dim_2')(input_from_layeri2)
+    x_reduce_dim = tf.keras.layers.Dropout(0.5)(x_reduce_dim)
+
+    
+    x2 = tf.keras.layers.UpSampling2D(size = (2,2), name = 'top_30')(xup)
+    x2 = tf.keras.layers.concatenate([x2,x_reduce_dim],axis = 3)
+    
+
+    x2 = tf.keras.layers.Conv2D(128,(1,1), activation = 'relu', padding = "same", name='top_31')(x2)
+    x2 = tf.keras.layers.Dropout(0.5)(x2)
+    x2 = tf.keras.layers.Conv2D(256,(3,3), activation = 'relu', padding = "same", name='top_32')(x2)
+    x2 = tf.keras.layers.Dropout(0.5)(x2)
+    x2 = tf.keras.layers.Conv2D(256,(1,1), activation = 'relu', padding = "same", name='top_33')(x2)
+    x2 = tf.keras.layers.Dropout(0.5)(x2)
+    x2 = tf.keras.layers.Conv2D(512,(3,3), activation = 'relu', padding = "same", name='top_34')(x2)
+    x2 = tf.keras.layers.Dropout(0.5)(x2)
+    x2 = tf.keras.layers.Conv2D(256,(1,1), activation = 'relu', padding = "same", name='top_35')(x2)
+    x2 = tf.keras.layers.Dropout(0.5)(x2)
+    x2 = tf.keras.layers.Conv2D(256,(3,3), activation = 'relu', padding = "same", name='top_36')(x2)
+    x2 = tf.keras.layers.Dropout(0.5)(x2)
+    x2 = tf.keras.layers.Conv2D(128,(1,1), activation = 'relu', padding = "same", name='top_37')(x2)
+    x2 = tf.keras.layers.Dropout(0.5)(x2)
+    
+    x2 = tf.keras.layers.Conv2D(2,(1,1), padding = "same", name='top_out_3')(x2)#, kernel_regularizer=tf.keras.regularizers.l2(1e-6), kernel_constraint=tf.keras.constraints.min_max_norm(min_value=1e-30, max_value=1.0))(x2)
+    # x2 = tf.keras.layers.Softmax(axis = -1)(x2)[...,0, None]
+    x2 = tf.keras.layers.Softmax(axis = -1, name='softmax_3')(x2)
+    x2 = Slice(name='slice_3')(x2)
+    
+    return tf.keras.models.Model([input1, input_from_layeri, input_from_layeri2], [x, x1, x2], name = 'top_model')
+
+def make_top_model_v3p5_flat(x, x1, x2):
+    #x is a tensor
+    x = tf.keras.layers.Conv2D(256,(1,1), activation = 'relu', padding = "same", name='top_11', kernel_regularizer =tf.keras.regularizers.l2( l2=0.01))(x)
+    x = tf.keras.layers.BatchNormalization(name='top_batch_norm_11')(x)
+    x = tf.keras.layers.Dropout(0.5)(x)
+    x = tf.keras.layers.Conv2D(512,(3,3), activation = 'relu', padding = "same", name='top_12', kernel_regularizer =tf.keras.regularizers.l2( l2=0.01))(x)
+    x = tf.keras.layers.BatchNormalization(name='top_batch_norm_12')(x)
+    x = tf.keras.layers.Dropout(0.5)(x)    
+    x = tf.keras.layers.Conv2D(256,(1,1), activation = 'relu', padding = "same", name='top_13', kernel_regularizer =tf.keras.regularizers.l2( l2=0.01))(x)
+    x = tf.keras.layers.BatchNormalization(name='top_batch_norm_13')(x)
+    x = tf.keras.layers.Dropout(0.5)(x)
+    x = tf.keras.layers.Conv2D(256,(3,3), activation = 'relu', padding = "same", name='top_14', kernel_regularizer =tf.keras.regularizers.l2( l2=0.01))(x)
+    x = tf.keras.layers.BatchNormalization(name='top_batch_norm_14')(x)
+    x = tf.keras.layers.Dropout(0.5)(x)
+    x = tf.keras.layers.Conv2D(128,(1,1), activation = 'relu', padding = "same", name='top_15', kernel_regularizer =tf.keras.regularizers.l2( l2=0.01))(x)
+    x = tf.keras.layers.BatchNormalization(name='top_batch_norm_15')(x)
+    x = tf.keras.layers.Dropout(0.5)(x)
+    
+   
+    xup = x
+    x = tf.keras.layers.Conv2D(2,(1,1), padding = "same", name='top_out_1')(x)#, kernel_regularizer=tf.keras.regularizers.l2(1e-6), kernel_constraint=tf.keras.constraints.min_max_norm(min_value=1e-30, max_value=1.0))(x)
+    # x = tf.keras.layers.Softmax(axis = -1)(x)[...,0, None]
+    x = tf.keras.layers.Softmax(axis = -1, name='softmax_1')(x)
+    # x = tf.keras.layers.BatchNormalization(name='top_batch_norm_softmax_1')(x)#CREATES NAN's
+    x = Slice(name='slice_1')(x)
+    
+    # input_from_layeri = tf.keras.Input(shape=base_model_layeri_output_shape, name = 'input_from_base_layeri')
+    x_reduce_dim = tf.keras.layers.Conv2D(256,(1,1), activation = 'relu', padding = "same", name='top_red_dim_1', kernel_regularizer =tf.keras.regularizers.l2( l2=0.01))(x1)
+    x_reduce_dim = tf.keras.layers.BatchNormalization(name='top_batch_norm_red_dim_1')(x_reduce_dim)
+    x_reduce_dim = tf.keras.layers.Dropout(0.5)(x_reduce_dim)
+
+    
+    x1 = tf.keras.layers.UpSampling2D(size = (2,2), name = 'top_20')(xup)
+    x1 = tf.keras.layers.concatenate([x1,x_reduce_dim],axis = 3)
+    
+
+    x1 = tf.keras.layers.Conv2D(128,(1,1), activation = 'relu', padding = "same", name='top_21', kernel_regularizer =tf.keras.regularizers.l2( l2=0.01))(x1)
+    x1 = tf.keras.layers.BatchNormalization(name='top_batch_norm_21')(x1)
+    x1 = tf.keras.layers.Dropout(0.5)(x1)
+    x1 = tf.keras.layers.Conv2D(256,(3,3), activation = 'relu', padding = "same", name='top_22', kernel_regularizer =tf.keras.regularizers.l2( l2=0.01))(x1)
+    x1 = tf.keras.layers.BatchNormalization(name='top_batch_norm_22')(x1)
+    x1 = tf.keras.layers.Dropout(0.5)(x1)
+    x1 = tf.keras.layers.Conv2D(256,(1,1), activation = 'relu', padding = "same", name='top_23', kernel_regularizer =tf.keras.regularizers.l2( l2=0.01))(x1)
+    x1 = tf.keras.layers.BatchNormalization(name='top_batch_norm_23')(x1)
+    x1 = tf.keras.layers.Dropout(0.5)(x1)
+    x1 = tf.keras.layers.Conv2D(512,(3,3), activation = 'relu', padding = "same", name='top_24', kernel_regularizer =tf.keras.regularizers.l2( l2=0.01))(x1)
+    x1 = tf.keras.layers.BatchNormalization(name='top_batch_norm_24')(x1)
+    x1 = tf.keras.layers.Dropout(0.5)(x1)
+    x1 = tf.keras.layers.Conv2D(256,(1,1), activation = 'relu', padding = "same", name='top_25', kernel_regularizer =tf.keras.regularizers.l2( l2=0.01))(x1)
+    x1 = tf.keras.layers.BatchNormalization(name='top_batch_norm_25')(x1)
+    x1 = tf.keras.layers.Dropout(0.5)(x1)
+    x1 = tf.keras.layers.Conv2D(256,(3,3), activation = 'relu', padding = "same", name='top_26', kernel_regularizer =tf.keras.regularizers.l2( l2=0.01))(x1)
+    x1 = tf.keras.layers.BatchNormalization(name='top_batch_norm_26')(x1)
+    x1 = tf.keras.layers.Dropout(0.5)(x1)
+    x1 = tf.keras.layers.Conv2D(128,(1,1), activation = 'relu', padding = "same", name='top_27', kernel_regularizer =tf.keras.regularizers.l2( l2=0.01))(x1)
+    x1 = tf.keras.layers.BatchNormalization(name='top_batch_norm_27')(x1)
+    x1 = tf.keras.layers.Dropout(0.5)(x1)
+    
+    xup = x1
+
+    
+    x1 = tf.keras.layers.Conv2D(2,(1,1), padding = "same", name='top_out_2')(x1)#, kernel_regularizer=tf.keras.regularizers.l2(1e-6), kernel_constraint=tf.keras.constraints.min_max_norm(min_value=1e-30, max_value=1.0))(x1)
+    # x1 = tf.keras.layers.Softmax(axis = -1)(x1)[...,0,None]
+    x1 = tf.keras.layers.Softmax(axis = -1, name='softmax_2')(x1)
+    # x1 = tf.keras.layers.BatchNormalization(name='top_batch_norm_softmax_2')(x1)#CREATES NAN's
+    x1 = Slice(name='slice_2')(x1)
+    
+    
+    # input_from_layeri2 = tf.keras.Input(shape = base_model_layeri_output_shape2, name = 'input_from_base_layeri2')
+    x_reduce_dim = tf.keras.layers.Conv2D(256,(1,1), activation = 'relu', padding = "same", name='top_red_dim_2', kernel_regularizer =tf.keras.regularizers.l2( l2=0.01))(x2)
+    x_reduce_dim = tf.keras.layers.BatchNormalization(name='top_batch_norm_red_dim_2')(x_reduce_dim)
+    x_reduce_dim = tf.keras.layers.Dropout(0.5)(x_reduce_dim)
+
+    
+    x2 = tf.keras.layers.UpSampling2D(size = (2,2), name = 'top_30')(xup)
+    x2 = tf.keras.layers.concatenate([x2,x_reduce_dim],axis = 3)
+    
+
+    x2 = tf.keras.layers.Conv2D(128,(1,1), activation = 'relu', padding = "same", name='top_31', kernel_regularizer =tf.keras.regularizers.l2( l2=0.01))(x2)
+    x2 = tf.keras.layers.BatchNormalization(name='top_batch_norm_31')(x2)
+    x2 = tf.keras.layers.Dropout(0.5)(x2)
+    x2 = tf.keras.layers.Conv2D(256,(3,3), activation = 'relu', padding = "same", name='top_32', kernel_regularizer =tf.keras.regularizers.l2( l2=0.01))(x2)
+    x2 = tf.keras.layers.BatchNormalization(name='top_batch_norm_32')(x2)
+    x2 = tf.keras.layers.Dropout(0.5)(x2)
+    x2 = tf.keras.layers.Conv2D(256,(1,1), activation = 'relu', padding = "same", name='top_33', kernel_regularizer =tf.keras.regularizers.l2( l2=0.01))(x2)
+    x2 = tf.keras.layers.BatchNormalization(name='top_batch_norm_33')(x2)
+    x2 = tf.keras.layers.Dropout(0.5)(x2)
+    x2 = tf.keras.layers.Conv2D(512,(3,3), activation = 'relu', padding = "same", name='top_34', kernel_regularizer =tf.keras.regularizers.l2( l2=0.01))(x2)
+    x2 = tf.keras.layers.BatchNormalization(name='top_batch_norm_34')(x2)
+    x2 = tf.keras.layers.Dropout(0.5)(x2)
+    x2 = tf.keras.layers.Conv2D(256,(1,1), activation = 'relu', padding = "same", name='top_35', kernel_regularizer =tf.keras.regularizers.l2( l2=0.01))(x2)
+    x2 = tf.keras.layers.BatchNormalization(name='top_batch_norm_35')(x2)
+    x2 = tf.keras.layers.Dropout(0.5)(x2)
+    x2 = tf.keras.layers.Conv2D(256,(3,3), activation = 'relu', padding = "same", name='top_36', kernel_regularizer =tf.keras.regularizers.l2( l2=0.01))(x2)
+    x2 = tf.keras.layers.BatchNormalization(name='top_batch_norm_36')(x2)
+    x2 = tf.keras.layers.Dropout(0.5)(x2)
+    x2 = tf.keras.layers.Conv2D(128,(1,1), activation = 'relu', padding = "same", name='top_37', kernel_regularizer =tf.keras.regularizers.l2( l2=0.01))(x2)
+    x2 = tf.keras.layers.BatchNormalization(name='top_batch_norm_37')(x2)
+    x2 = tf.keras.layers.Dropout(0.5)(x2)
+    
+    x2 = tf.keras.layers.Conv2D(2,(1,1), padding = "same", name='top_out_3')(x2)#, kernel_regularizer=tf.keras.regularizers.l2(1e-6), kernel_constraint=tf.keras.constraints.min_max_norm(min_value=1e-30, max_value=1.0))(x2)
+    # x2 = tf.keras.layers.Softmax(axis = -1)(x2)[...,0, None]
+    x2 = tf.keras.layers.Softmax(axis = -1, name='softmax_3')(x2)
+    # x2 = tf.keras.layers.BatchNormalization(name='top_batch_norm_softmax_3')(x2) #CREATES NAN's
+    x2 = Slice(name='slice_3')(x2)
+    
+    # return tf.keras.models.Model([input1, input_from_layeri, input_from_layeri2], [x, x1, x2], name = 'top_model')
+    return x, x1, x2
+
+def make_top_model_tiny_flat(x, x1, x2):
+    #x is a tensor
+    x = tf.keras.layers.Conv2D(32,(1,1), activation = 'relu', padding = "same", name='top_11')(x)
+    x = tf.keras.layers.Dropout(0.5)(x)
+    x = tf.keras.layers.Conv2D(64,(3,3), activation = 'relu', padding = "same", name='top_12')(x)
+    x = tf.keras.layers.Dropout(0.5)(x)    
+    x = tf.keras.layers.Conv2D(32,(1,1), activation = 'relu', padding = "same", name='top_13')(x)
+    x = tf.keras.layers.Dropout(0.5)(x)
+
+    
+   
+    xup = x
+    x = tf.keras.layers.Conv2D(2,(1,1), padding = "same", name='top_out_1')(x)#, kernel_regularizer=tf.keras.regularizers.l2(1e-6), kernel_constraint=tf.keras.constraints.min_max_norm(min_value=1e-30, max_value=1.0))(x)
+    # x = tf.keras.layers.Softmax(axis = -1)(x)[...,0, None]
+    x = tf.keras.layers.Softmax(axis = -1, name='softmax_1')(x)
+    x = Slice(name='slice_1')(x)
+    
+    # input_from_layeri = tf.keras.Input(shape=base_model_layeri_output_shape, name = 'input_from_base_layeri')
+    x_reduce_dim = tf.keras.layers.Conv2D(32,(1,1), activation = 'relu', padding = "same", name='top_red_dim_1')(x1)
+    x_reduce_dim = tf.keras.layers.Dropout(0.5)(x_reduce_dim)
+
+    
+    x1 = tf.keras.layers.UpSampling2D(size = (2,2), name = 'top_20')(xup)
+    x1 = tf.keras.layers.concatenate([x1,x_reduce_dim],axis = 3)
+    
+
+    x1 = tf.keras.layers.Conv2D(32,(1,1), activation = 'relu', padding = "same", name='top_21')(x1)
+    x1 = tf.keras.layers.Dropout(0.5)(x1)
+    x1 = tf.keras.layers.Conv2D(64,(3,3), activation = 'relu', padding = "same", name='top_22')(x1)
+    x1 = tf.keras.layers.Dropout(0.5)(x1)
+    x1 = tf.keras.layers.Conv2D(64,(1,1), activation = 'relu', padding = "same", name='top_23')(x1)
+    x1 = tf.keras.layers.Dropout(0.5)(x1)
+    x1 = tf.keras.layers.Conv2D(64,(3,3), activation = 'relu', padding = "same", name='top_24')(x1)
+    x1 = tf.keras.layers.Dropout(0.5)(x1)
+    x1 = tf.keras.layers.Conv2D(32,(1,1), activation = 'relu', padding = "same", name='top_25')(x1)
+
+    
+    xup = x1
+
+    
+    x1 = tf.keras.layers.Conv2D(2,(1,1), padding = "same", name='top_out_2')(x1)#, kernel_regularizer=tf.keras.regularizers.l2(1e-6), kernel_constraint=tf.keras.constraints.min_max_norm(min_value=1e-30, max_value=1.0))(x1)
+    # x1 = tf.keras.layers.Softmax(axis = -1)(x1)[...,0,None]
+    x1 = tf.keras.layers.Softmax(axis = -1, name='softmax_2')(x1)
+    x1 = Slice(name='slice_2')(x1)
+    
+    
+    # input_from_layeri2 = tf.keras.Input(shape = base_model_layeri_output_shape2, name = 'input_from_base_layeri2')
+    x_reduce_dim = tf.keras.layers.Conv2D(32,(1,1), activation = 'relu', padding = "same", name='top_red_dim_2')(x2)
+    x_reduce_dim = tf.keras.layers.Dropout(0.5)(x_reduce_dim)
+
+    
+    x2 = tf.keras.layers.UpSampling2D(size = (2,2), name = 'top_30')(xup)
+    x2 = tf.keras.layers.concatenate([x2,x_reduce_dim],axis = 3)
+    
+
+    x2 = tf.keras.layers.Conv2D(32,(1,1), activation = 'relu', padding = "same", name='top_31')(x2)
+    x2 = tf.keras.layers.Dropout(0.5)(x2)
+    x2 = tf.keras.layers.Conv2D(64,(3,3), activation = 'relu', padding = "same", name='top_32')(x2)
+    x2 = tf.keras.layers.Dropout(0.5)(x2)
+    x2 = tf.keras.layers.Conv2D(64,(1,1), activation = 'relu', padding = "same", name='top_33')(x2)
+    x2 = tf.keras.layers.Dropout(0.5)(x2)
+    x2 = tf.keras.layers.Conv2D(64,(3,3), activation = 'relu', padding = "same", name='top_34')(x2)
+    x2 = tf.keras.layers.Dropout(0.5)(x2)
+    x2 = tf.keras.layers.Conv2D(32,(1,1), activation = 'relu', padding = "same", name='top_35')(x2)
+    x2 = tf.keras.layers.Dropout(0.5)(x2)
+
+    
+    x2 = tf.keras.layers.Conv2D(2,(1,1), padding = "same", name='top_out_3')(x2)#, kernel_regularizer=tf.keras.regularizers.l2(1e-6), kernel_constraint=tf.keras.constraints.min_max_norm(min_value=1e-30, max_value=1.0))(x2)
+    # x2 = tf.keras.layers.Softmax(axis = -1)(x2)[...,0, None]
+    x2 = tf.keras.layers.Softmax(axis = -1, name='softmax_3')(x2)
+    x2 = Slice(name='slice_3')(x2)
+    
+    # return tf.keras.models.Model([input1, input_from_layeri, input_from_layeri2], [x, x1, x2], name = 'top_model')
+    return x, x1, x2
 
 def removeClassificationLayers(iEncoderDecoder, iEncoderOutputIdxList, iDecoderOutputNames):
     wEncoderOutputs = [iEncoderDecoder.layers[wIdx].output for wIdx in iEncoderOutputIdxList]
@@ -266,7 +589,8 @@ def addConv2DBlock(iInput, iDepthList, iKernelList, iActivation='relu', iPadding
             wName = iNameList[i]
         else:
             wName = '_'.join([iNamePrefix, adjust_number(i,2)])
-        wX =tf.keras.layers.Conv2D(wDepth, wPool, activation=iActivation, padding=iPadding, name=wName)(wX)
+        wX =tf.keras.layers.Conv2D(wDepth, wPool, activation=None, padding=iPadding, name=wName)(wX)
+        wX = tf.keras.layers.ReLU(name='_'.join(['relu']+wName.split('_')[1:]))(wX)
         if iDropout:
             wX = tf.keras.layers.Dropout(iDropout, name='_'.join(['dropout']+wName.split('_')[1:]))(wX)
         if iBatchNorm:
@@ -360,9 +684,9 @@ def createDecoderModel(iShapeList, iInputNameList, iReduceDimDepthList, iDepthLi
     if iWithTop:
         for i in range(len(wXConvBlockList)):
             wXConvBlockList[i] = tf.keras.layers.Conv2D(2, 1, padding=iPadding, name=f'top_out_{i+1}')(wXConvBlockList[i])
-            wXConvBlockList[i] = tf.keras.layers.Softmax(axis=-1, name=f'softmax_{i+1}')(wXConvBlockList[i])
+            wXConvBlockList[i] = tf.keras.layers.Softmax(axis=-1, name=f'softmax_{i+1}')(wXConvBlockList[i])[...,0,None]
     
-    return tf.keras.models.Model(wEncoderOutputList, wXConvBlockList)
+    return tf.keras.models.Model(wEncoderOutputList, wXConvBlockList, name='decoder')
 
 
 def make_top_model_v4(iWithTop):
@@ -391,9 +715,29 @@ def make_top_model_v6(iShapeList, iWithTop):
 
     return createDecoderModel(iShapeList, wInputNameList, wReduceDimDepthList, wDepthListList, wKernelListList, iActivation='relu', iPadding='same', iDropout=0.5, iBatchNorm=True, iWithTop=iWithTop)
 
+
+def make_top_model_v7(iShapeList, iWithTop):
+    # wShapeList = [(14,14,2048), (28,28,1024), (56,56,512)]
+    wReduceDimDepthList = [None, 128, 128]
+    wDepthListList = [[128,128,64], [64,128,128,128,64], [64,128,128,128,64]]
+    wKernelListList= [[1,3,1], [1,3,1,3,1], [1,3,1,3,1]]
+    wInputNameList= ['input_to_top', "input_from_base_layeri", "input_from_base_layeri2"]
+
+    return createDecoderModel(iShapeList, wInputNameList, wReduceDimDepthList, wDepthListList, wKernelListList, iActivation='relu', iPadding='same', iDropout=0.5, iBatchNorm=True, iWithTop=iWithTop)
+
+def make_top_model_v8(iShapeList, iWithTop):
+    # wShapeList = [(14,14,2048), (28,28,1024), (56,56,512)]
+    wReduceDimDepthList = [None, 64, 64]
+    wDepthListList = [[64,64,32], [32,64,64,64,32], [32,64,64,64,32]]
+    wKernelListList= [[1,3,1], [1,3,1,3,1], [1,3,1,3,1]]
+    wInputNameList= ['input_to_top', "input_from_base_layeri", "input_from_base_layeri2"]
+
+    return createDecoderModel(iShapeList, wInputNameList, wReduceDimDepthList, wDepthListList, wKernelListList, iActivation='relu', iPadding='same', iDropout=0.5, iBatchNorm=True, iWithTop=iWithTop)
+
+
 if __name__ =='__main__':
-    pass
     
+    wModel = makeYoloTypeFlat(iShape=(448,448,3), iRes=3, iDeeper=0, iLegacy=False)
 
     wDepthList = [128, 256, 256, 256, 128]
     wKernelList = [1, 3, 1, 3, 1]

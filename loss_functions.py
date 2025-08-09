@@ -31,15 +31,16 @@ def flat_map_list_v2(map_list, inv = 0):
         flat_list.append(flat)
     return flat_list  
 def act_list_3D(map_list):
-    act_list = []
+    return [np.float32(np.where(mapi < np.max(mapi, axis = (0,1), keepdims=True), 0.,1.)) for mapi in map_list]
+    # act_list = []
     
-    for mapi in map_list:
-        max_map = np.max(mapi, axis = (0,1), keepdims=True)
-        im_act = np.where(mapi < max_map, 0.,1.)
+    # for mapi in map_list:
+    #     max_map = np.max(mapi, axis = (0,1), keepdims=True)
+    #     im_act = np.where(mapi < max_map, 0.,1.)
         
-        act_list.append(np.float32(im_act))
+    #     act_list.append(np.float32(im_act))
     
-    return act_list
+    # return act_list
 
 def act_3D(mapi):
     max_map = np.max(mapi, axis = (0,1), keepdims=True)
